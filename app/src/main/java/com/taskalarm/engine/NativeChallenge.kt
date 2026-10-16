@@ -27,13 +27,11 @@ internal class NativeChallenge(private val context: Context, val task: JSONObjec
   private var gx = 0f; private var gy = 0f
   private var offsetX = 0f; private var offsetY = 0f
   private var smoothX = 0f; private var smoothY = 0f
-  private var sampleValue = 0f
-  private var eventType = 0
-  private var lightRefreshAt = 0L
+  private var hasReading = false
   @Synchronized fun start() {
     if (running) return
     running = true; resumedAt = SystemClock.elapsedRealtime(); lastReading = 0
-    progress.pause(); maze?.pause(); eventStamp = -1
+    progress.pause(); maze?.pause(); eventStamp = -1; hasReading = false; unavailable = null
     if (kind == "maze" && task.optString("controlMode", "tilt") == "touch") return
     if (kind == "walk" && Build.VERSION.SDK_INT >= 29 && context.checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED) {
       unavailable = "Activity recognition permission is unavailable. Use your configured fallback."; return
@@ -52,14 +50,17 @@ internal class NativeChallenge(private val context: Context, val task: JSONObjec
   @Synchronized fun calibrate() { offsetX = smoothX; offsetY = smoothY }
   override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) { }
   @Synchronized override fun onSensorChanged(event: SensorEvent) {
-    if (!running) return
+    if (!running || event.values.isEmpty() || event.sensor.type != sensor?.type) return
     val timestamp = event.timestamp / 1_000_000
     val now = SystemClock.elapsedRealtime()
-    if (timestamp <= eventStamp || timestamp < resumedAt || now-timestamp !in 0..2000) return
-    eventStamp = timestamp; lastReading = now
+    if (event.timestamp <= eventStamp || timestamp > now || event.timestamp < 0) return
+    // An on-change light sensor may deliver its latest value with an older timestamp
+    // when activated. Accept the value but start the hold at receipt, never in the past.
+    if (kind != "light" && (timestamp < resumedAt || now-timestamp > 2000)) return
     val value = event.values[0]
     if (!value.isFinite()) return
-    eventType = event.sensor.type; sampleValue = value
+    eventStamp = event.timestamp; lastReading = now; hasReading = true
+    unavailable = null
     if (kind == "maze") {
       if (event.values.size < 2 || !event.values[1].isFinite()) return
       val x = event.values[0]; val y = event.values[1]
@@ -70,24 +71,16 @@ internal class NativeChallenge(private val context: Context, val task: JSONObjec
       smoothY = .8f*smoothY + .2f*axes.second
       gx = ((smoothX-offsetX)/4f).coerceIn(-1f,1f); gy = ((smoothY-offsetY)/4f).coerceIn(-1f,1f)
     } else {
-      progress.sample(eventType, value, timestamp, task.optInt("lightLux",200))
-      lightRefreshAt = now
+      progress.sample(event.sensor.type, value, if(kind == "light") now else timestamp, task.optInt("lightLux",200))
     }
   }
   @Synchronized fun frame(x: Float, y: Float): NativeFrame {
     val now = SystemClock.elapsedRealtime()
     if (running && unavailable == null && !(kind == "maze" && task.optString("controlMode", "tilt") == "touch")) {
       val silence = now - maxOf(resumedAt,lastReading)
-      if (silence > 15_000) unavailable = "No recent sensor response. You can use your configured fallback."
+      if (silence > 15_000 && (kind != "light" || !hasReading)) unavailable = "No recent sensor response. You can use your configured fallback."
     }
-    // Light sensors often emit only when brightness changes. Re-register to request a fresh
-    // hardware reading; never extend the hold by replaying a cached lux value.
-    if (running && kind == "light" && sensor != null && now-lightRefreshAt > 700) {
-      manager.unregisterListener(this)
-      try { manager.registerListener(this,sensor,SensorManager.SENSOR_DELAY_GAME) } catch (_: SecurityException) { unavailable = "Light sensor access was lost." }
-      lightRefreshAt = now
-    }
-    progress.stale(now)
+    progress.advance(now)
     val touch = task.optString("controlMode", "tilt") == "touch"
     val responding = running && (touch || now-lastReading in 0..1000)
     val mazeFrame = maze?.frame(now,if (responding) { if(touch) x else gx } else 0f,if (responding) { if(touch) y else gy } else 0f)

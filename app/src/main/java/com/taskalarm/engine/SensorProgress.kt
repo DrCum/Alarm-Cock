@@ -7,10 +7,17 @@ internal class SensorProgress(val kind: String, initialSteps: Int = 0) {
   var heldMs = 0L; private set
   private var lastTimestamp = -1L
   private var counterBaseline: Float? = null
-  private var lastBright = -1L
-  fun pause() { counterBaseline = null; lastBright = -1; heldMs = 0; lastTimestamp = -1 }
+  private var lightAbove = false
+  private var lastHoldTick = -1L
+  fun pause() {
+    counterBaseline = null; lightAbove = false; lastHoldTick = -1
+    heldMs = 0; lux = 0f; lastTimestamp = -1
+  }
   fun sample(type: Int, value: Float, timeMs: Long, threshold: Int) {
-    if (!value.isFinite() || timeMs <= lastTimestamp) return
+    val light = type == android.hardware.Sensor.TYPE_LIGHT
+    // Multiple light changes can be delivered within one millisecond. The native listener
+    // rejects duplicate hardware timestamps; do not discard a newer dark reading here.
+    if (!value.isFinite() || timeMs < lastTimestamp || (!light && timeMs == lastTimestamp)) return
     lastTimestamp = timeMs
     when (type) {
       android.hardware.Sensor.TYPE_STEP_DETECTOR -> if (value == 1f) steps++
@@ -22,11 +29,19 @@ internal class SensorProgress(val kind: String, initialSteps: Int = 0) {
       android.hardware.Sensor.TYPE_LIGHT -> {
         lux = value.coerceAtLeast(0f)
         if (lux >= threshold) {
-          if (lastBright >= 0 && timeMs - lastBright <= 1500) heldMs += timeMs - lastBright else heldMs = 0
-          lastBright = timeMs
-        } else { heldMs = 0; lastBright = -1 }
+          if (!lightAbove) { heldMs = 0; lastHoldTick = timeMs }
+          lightAbove = true
+        } else { heldMs = 0; lightAbove = false; lastHoldTick = -1 }
       }
     }
   }
-  fun stale(nowMs: Long) { if (lastBright >= 0 && nowMs-lastBright > 1500) { lastBright = -1; heldMs = 0 } }
+  fun advance(nowMs: Long) {
+    if (kind != "light" || !lightAbove || lastHoldTick < 0) return
+    // TYPE_LIGHT is an on-change sensor: silence means its last value still applies.
+    // Count monotonic time while the foreground listener is active, not events.
+    // Lifecycle pause clears this state and requires another reading on resume.
+    val delta = nowMs - lastHoldTick
+    if (delta >= 0) heldMs += delta else heldMs = 0
+    lastHoldTick = nowMs
+  }
 }

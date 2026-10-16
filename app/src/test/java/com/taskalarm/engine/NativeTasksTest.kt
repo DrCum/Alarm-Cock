@@ -32,17 +32,34 @@ class NativeTasksTest {
     assertEquals(1,progress.steps)
     progress.sample(Sensor.TYPE_STEP_DETECTOR,1f,103,200); assertEquals(2,progress.steps)
   }
-  @Test fun lightNeedsContinuousFreshSamplesAndResetsOnDarkOrBackground() {
+  @Test fun lightHoldAdvancesBetweenEventsAndResetsOnlyOnDarkOrPause() {
+    val progress=SensorProgress("light")
+    progress.sample(Sensor.TYPE_LIGHT,5000f,1000,200)
+    for(t in 1100L..4000L step 100) progress.advance(t)
+    assertEquals(3000,progress.heldMs.toInt())
+    progress.sample(Sensor.TYPE_LIGHT,6000f,4100,200)
+    progress.advance(4200); assertEquals(3200,progress.heldMs.toInt())
+    progress.sample(Sensor.TYPE_LIGHT,199f,4300,200); assertEquals(0,progress.heldMs.toInt())
+    progress.advance(4400); assertEquals(0,progress.heldMs.toInt())
+    progress.sample(Sensor.TYPE_LIGHT,200f,4500,200)
+    progress.advance(4600); assertEquals(100,progress.heldMs.toInt())
+    progress.pause(); progress.advance(4700); assertEquals(0,progress.heldMs.toInt())
+  }
+  @Test fun lightHoldDoesNotResetWhenOnlyTheUiIsSlowAndPauseStillClearsIt() {
     val progress=SensorProgress("light")
     progress.sample(Sensor.TYPE_LIGHT,300f,1000,200)
-    progress.sample(Sensor.TYPE_LIGHT,300f,2000,200)
-    progress.sample(Sensor.TYPE_LIGHT,300f,3000,200); assertEquals(2000,progress.heldMs.toInt())
-    progress.sample(Sensor.TYPE_LIGHT,100f,3500,200); assertEquals(0,progress.heldMs.toInt())
-    progress.sample(Sensor.TYPE_LIGHT,300f,4000,200)
-    progress.sample(Sensor.TYPE_LIGHT,300f,5000,200); assertEquals(1000,progress.heldMs.toInt())
-    progress.stale(6600); assertEquals(0,progress.heldMs.toInt())
-    progress.sample(Sensor.TYPE_LIGHT,300f,7000,200); assertEquals(0,progress.heldMs.toInt())
-    progress.sample(Sensor.TYPE_LIGHT,300f,8000,200); progress.pause(); assertEquals(0,progress.heldMs.toInt())
+    progress.advance(1500); assertEquals(500,progress.heldMs.toInt())
+    progress.advance(5000); assertEquals(4000,progress.heldMs.toInt())
+    progress.advance(5100); assertEquals(4100,progress.heldMs.toInt())
+    progress.pause(); progress.advance(5200); assertEquals(0,progress.heldMs.toInt())
+  }
+  @Test fun aDarkChangeDeliveredInTheSameMillisecondStillResetsTheHold() {
+    val progress=SensorProgress("light")
+    progress.sample(Sensor.TYPE_LIGHT,300f,1000,200)
+    progress.advance(1500)
+    progress.sample(Sensor.TYPE_LIGHT,400f,1500,200)
+    progress.sample(Sensor.TYPE_LIGHT,100f,1500,200)
+    progress.advance(1600); assertEquals(0,progress.heldMs.toInt())
   }
   @Test fun mazeCannotTunnelThroughWallsOrTeleportAfterAPause() {
     val maze=MazeGame("hard",JSONObject())

@@ -128,6 +128,10 @@ The download Site source is retained at `/workspace/sites/task-alarm-download`; 
 - Walking tasks (default 20 steps) and ambient-light tasks (default 200 lux for 3 seconds), with live demos, permission checks, and configured math/text fallbacks.
 - Reusable local morning routines: save, rename, update, duplicate, review/apply, and delete. Applying keeps the alarm schedule and creates independent task copies.
 
-All new settings preserve existing alarms on upgrade and default off. Walking credit pauses outside the task; light holds restart when backgrounded. Light tasks pause the app's flashlight. Missing sensors/access or 15 seconds without readings allow the configured fallback. A step sensor measures movement and a light sensor measures brightness; neither proves location. Hardware behavior and lock-screen/Doze delivery require physical-device verification. Alarms before the first unlock after reboot remain unsupported.
+All new settings preserve existing alarms on upgrade and default off. Walking credit pauses outside the task; light holds restart when backgrounded. Light tasks pause the app's flashlight. Missing sensors/access or no initial light reading within 15 seconds allow the configured fallback; walking/tilt tasks also detect a 15-second interruption in events. A step sensor measures movement and a light sensor measures brightness; neither proves location. Hardware behavior and lock-screen/Doze delivery require physical-device verification. Alarms before the first unlock after reboot remain unsupported.
 
 Implementation details and acceptance checks: [wake-up features plan](docs/wake-up-features-plan.md).
+
+### Light task fix (0.11.1)
+
+The light threshold accepts any finite lux reading at or above the configured value. Android light sensors report on change, so steady brightness may produce no further events. The hold now uses monotonic foreground time while the latest reading remains above the threshold. The listener stays registered; silence after a valid reading neither resets the timer nor marks the sensor unavailable. Falling below the threshold, leaving the task, or recreating the process resets the hold. An initial on-change value with an older hardware timestamp starts the hold at receipt and cannot backdate completion.

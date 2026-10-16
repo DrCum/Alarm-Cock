@@ -67,16 +67,50 @@ class SensorFlowTest {
     emit(detector,1f); assertEquals(4,recreated.nativeFrame(id,challenge,false).steps)
     recreated.stopNative(challenge)
   }
-  @Test fun steadyLightNeedsFreshReadingsAndFinishesThroughNativeValidation() {
+  @Test fun oneOnChangeLightReadingCanCompleteALongHoldWithoutTimeoutOrReconnection() {
     val light=sensor(Sensor.TYPE_LIGHT)
-    val (id,challenge)=start(TaskDraft(kind="light",lightLux=200,lightHoldSeconds=2))
-    emit(light,300f); engine.nativeFrame(id,challenge,false)
-    ShadowSystemClock.advanceBy(Duration.ofSeconds(3))
-    assertEquals(0,engine.nativeFrame(id,challenge,false).heldMs.toInt())
-    assertEquals(1,store.sessions().size)
-    repeat(22) {emit(light,300f)}
-    assertTrue(engine.nativeFrame(id,challenge,false).complete)
+    val (id,challenge)=start(TaskDraft(kind="light",lightLux=200,lightHoldSeconds=20))
+    emit(light,5000f)
+    var frame=engine.nativeFrame(id,challenge,false)
+    val listener=shadowOf(manager).listeners.single()
+    repeat(200) {
+      ShadowSystemClock.advanceBy(Duration.ofMillis(100))
+      frame=engine.nativeFrame(id,challenge,false)
+      assertNull(frame.unavailable)
+      if(!frame.complete) assertSame(listener,shadowOf(manager).listeners.single())
+    }
+    assertTrue(frame.complete); assertEquals(20_000,frame.heldMs.toInt())
     assertTrue(store.sessions().isEmpty()); assertTrue(shadowOf(manager).listeners.isEmpty())
+  }
+  @Test fun aBelowThresholdReadingResetsTheHoldAndBackgroundingNeedsANewReading() {
+    val light=sensor(Sensor.TYPE_LIGHT)
+    val (id,challenge)=start(TaskDraft(kind="light",lightLux=200,lightHoldSeconds=3))
+    emit(light,500f); engine.nativeFrame(id,challenge,false)
+    repeat(10) {ShadowSystemClock.advanceBy(Duration.ofMillis(100)); engine.nativeFrame(id,challenge,false)}
+    emit(light,100f); assertEquals(0,engine.nativeFrame(id,challenge,false).heldMs.toInt())
+    emit(light,500f); engine.nativeFrame(id,challenge,false)
+    repeat(10) {ShadowSystemClock.advanceBy(Duration.ofMillis(100)); engine.nativeFrame(id,challenge,false)}
+    engine.stopNative(challenge); engine.startNative(id,challenge,false)
+    repeat(10) {ShadowSystemClock.advanceBy(Duration.ofMillis(100)); assertEquals(0,engine.nativeFrame(id,challenge,false).heldMs.toInt())}
+    engine.stopNative(challenge)
+  }
+  @Test fun initialOnChangeValueMayHaveAnOlderTimestampButCannotBackdateTheHold() {
+    val light=sensor(Sensor.TYPE_LIGHT)
+    ShadowSystemClock.advanceBy(Duration.ofSeconds(5))
+    val (id,challenge)=start(TaskDraft(kind="light",lightLux=200,lightHoldSeconds=3))
+    val event=SensorEventBuilder.newBuilder().setSensor(light).setTimestamp(SystemClock.elapsedRealtimeNanos()-4_000_000_000L).setValues(floatArrayOf(400f)).build()
+    shadowOf(manager).sendSensorEventToListeners(event,light)
+    val frame=engine.nativeFrame(id,challenge,false)
+    assertEquals(400f,frame.lux,0f); assertEquals(0,frame.heldMs.toInt()); assertFalse(frame.complete)
+    engine.stopNative(challenge)
+  }
+  @Test fun lightWithoutAnyInitialReadingStillOffersTheConfiguredFallback() {
+    sensor(Sensor.TYPE_LIGHT)
+    val (id,challenge)=start(TaskDraft(kind="light"))
+    repeat(160) {ShadowSystemClock.advanceBy(Duration.ofMillis(100)); engine.nativeFrame(id,challenge,false)}
+    assertNotNull(engine.nativeFrame(id,challenge,false).unavailable)
+    engine.nativeFallback(id,challenge,false)
+    assertEquals("math",store.sessions().single().getString("kind"))
   }
   @Test fun staleTiltReadingsStopMovingTheMazeBall() {
     val gravity=sensor(Sensor.TYPE_GRAVITY)
