@@ -28,7 +28,7 @@ Two minutes after dismissal, a notification shows **Wake-up check at [time]** us
 
 The check uses a notification and requests a full-screen pop-up when Android allows it. Choose **Yes / No** or a separate ordered list of confirmation tasks. Yes, or completing every confirmation task before the deadline, ends the cycle. No rings immediately. An unanswered or unfinished check re-rings at its deadline. The repeat alarm reuses the original dismiss tasks by default, or uses custom repeat tasks when configured; snooze tasks stay unchanged. A repeat alarm that is dismissed starts a new check cycle until the user confirms they are up.
 
-Check records, challenge progress, and exact native timers persist across app recreation. The advance reminder, due notification, and re-ring deadline are independently scheduled with AlarmManager, so the UI does not need to be open. Boot restoration re-arms the timers after unlock; overdue retries are delivered through an exact event rather than directly starting a media service from the boot receiver. Times are stored as wall-clock deadlines; manually changing the clock may shorten or extend a check. Editing, disabling, or deleting the source alarm cancels its pending checks. A new regular occurrence supersedes older checks for that alarm.
+Check records, challenge progress, and exact native timers persist across app recreation. The advance reminder, due notification, and re-ring deadline are independently scheduled with AlarmManager, so the UI does not need to be open. Boot restoration re-arms the timers after unlock; overdue retries are delivered through an exact event rather than directly starting a media service from the boot receiver. Times are stored as wall-clock deadlines; manually changing the clock may shorten or extend a check. Editing task/settings, disabling, or deleting the source alarm cancels its pending checks. In 0.11.0, changing only schedule exceptions preserves an existing cycle. A new regular occurrence supersedes older checks for that alarm.
 
 Use **Test wake-up check now** to open a check immediately while retaining the configured response deadline. No or timeout starts a test ring; dismissing or snoozing that test ends it without creating another check. The existing **Test sound & tasks now** does not create delayed checks.
 
@@ -110,10 +110,24 @@ There is no backend, downloadable catalog, JavaScript game host, OTA task distri
 
 On 2026-10-16, `:app:assembleDebug`, `:app:testDebugUnitTest`, and `:app:lintDebug` passed. All 82 tests passed, including active-time/AFK accounting, game/wake-check deadlines, memory sequences, snooze limits and recovery, task shuffling, sound assets, and flashlight/vibration service integration, escalation triggers and recovery, 45-second rotation, and volume restoration on API 28. Lint reported zero errors and 20 warnings, including diagnostics for the alarm-lifetime flashlight/rotation wake locks; the service releases each lock when its effect stops. APK signature verification and ZIP integrity checks passed. The standalone universal debug APK is approximately 36 MiB and includes ARM64, ARMv7, x86, and x86_64 native libraries.
 
-The user reported that basic ringing and task dismissal worked in 0.1.0. The volume controls, wake-up checks, advance reminders, flashlight modes, game/button controls, memory playback, vibration, bundled sounds, and escalation still require physical-device verification, especially Doze, notification actions, and reboot recovery. The 0.6.0 signing certificate matches 0.5.0 and earlier builds for installation over the existing app.
+The user reported that basic ringing and task dismissal worked in 0.1.0. The volume controls, wake-up checks, advance reminders, flashlight modes, game/button controls, memory playback, vibration, bundled sounds, and escalation still require physical-device verification, especially Doze, notification actions, and reboot recovery. The 0.11.0 signing certificate matches 0.5.0 and earlier builds for installation over the existing app.
 
 ## Browser download
 
 The current APK is also available through the private [Task Alarm download page](https://task-alarm-download-58b83158.mhorlacher444.chatgpt.site). Sign in with the owning ChatGPT account if prompted. Download the ZIP, extract it with Android Files, then open the APK. The ZIP preserves the original signed APK unchanged.
 
 The download Site source is retained at `/workspace/sites/task-alarm-download`; its `.openai/hosting.json` contains the existing project ID for future updates.
+
+
+### Wake-up expansion (0.11.0)
+
+- Alarm health screen with access/capability checks and a 30-second locked-phone delivery test.
+- Skip next/undo, pause-until, weekday/weekend shortcuts, and next-ring previews.
+- Optional difficulty increase after completed snoozes and randomized wake-up check delays (default range 3–7 minutes).
+- Offline native tilt/touch maze with ordered checkpoints; completion does not depend on score.
+- Walking tasks (default 20 steps) and ambient-light tasks (default 200 lux for 3 seconds), with live demos, permission checks, and configured math/text fallbacks.
+- Reusable local morning routines: save, rename, update, duplicate, review/apply, and delete. Applying keeps the alarm schedule and creates independent task copies.
+
+All new settings preserve existing alarms on upgrade and default off. Walking credit pauses outside the task; light holds restart when backgrounded. Light tasks pause the app's flashlight. Missing sensors/access or 15 seconds without readings allow the configured fallback. A step sensor measures movement and a light sensor measures brightness; neither proves location. Hardware behavior and lock-screen/Doze delivery require physical-device verification. Alarms before the first unlock after reboot remain unsupported.
+
+Implementation details and acceptance checks: [wake-up features plan](docs/wake-up-features-plan.md).

@@ -12,13 +12,23 @@ data class TaskDraft(
   val barcodeMode: String = "any",
   val barcode: String = "",
   val gameSeconds: Int = 60,
-  val gameIdleSeconds: Int = 20
+  val gameIdleSeconds: Int = 20,
+  val stepTarget: Int = 20,
+  val lightLux: Int = 200,
+  val lightHoldSeconds: Int = 3,
+  val controlMode: String = "tilt",
+  val fallbackKind: String = "math"
 ) {
   fun json() = JSONObject().put("id", id).put("kind", kind).put("difficulty", difficulty).put("rounds", rounds)
     .put("barcodeMode", barcodeMode).put("barcode", barcode)
     .put("gameSeconds", gameSeconds).put("gameIdleSeconds", gameIdleSeconds)
-  val name get() = when (kind) { "text" -> "Type random text"; "math" -> "Solve math"; "breakout" -> "Play Breakout"; "memory" -> "Repeat a memory sequence"; else -> "Scan a barcode" }
+    .put("stepTarget", stepTarget).put("lightLux", lightLux).put("lightHoldSeconds", lightHoldSeconds)
+    .put("controlMode", controlMode).put("fallbackKind", fallbackKind)
+  val name get() = when (kind) { "text" -> "Type random text"; "math" -> "Solve math"; "breakout" -> "Play Breakout"; "memory" -> "Repeat a memory sequence"; "maze" -> "Tilt maze"; "walk" -> "Walk with your phone"; "light" -> "Find bright light"; else -> "Scan a barcode" }
   val example get() = when (kind) {
+    "maze" -> "${when(difficulty) { "hard" -> 3; "medium" -> 2; else -> 1 }} wall(s), ${when(difficulty) { "hard" -> "narrow"; "medium" -> "medium"; else -> "wide" }} passages; reach numbered checkpoints and the exit"
+    "walk" -> "Walk $stepTarget steps with your phone"
+    "light" -> "Stay above $lightLux lux for $lightHoldSeconds seconds"
     "text" -> when (difficulty) { "easy" -> "kefuma"; "medium" -> "K7mP3xRa9q"; else -> "R8!mQ2#vL9@pX4&s" }
     "breakout" -> "$gameSeconds seconds of active play · idle $gameIdleSeconds seconds resets time"
     "memory" -> when (difficulty) { "easy" -> "1 → 3 → 2"; "medium" -> "1 → 3 → 2 → 4 → 1"; else -> "1 → 3 → 2 → 4 → 1 → 2 → 3" }
@@ -27,7 +37,9 @@ data class TaskDraft(
   companion object {
     fun from(value: JSONObject) = TaskDraft(value.getString("id"), value.getString("kind"), value.getString("difficulty"),
       value.getInt("rounds"), value.getString("barcodeMode"), value.getString("barcode"),
-      value.optInt("gameSeconds", 60), value.optInt("gameIdleSeconds", 20))
+      value.optInt("gameSeconds", 60), value.optInt("gameIdleSeconds", 20),
+      value.optInt("stepTarget", 20), value.optInt("lightLux", 200), value.optInt("lightHoldSeconds", 3),
+      value.optString("controlMode", "tilt"), value.optString("fallbackKind", "math"))
   }
 }
 
@@ -69,7 +81,15 @@ data class AlarmDraft(
   val vibrate: Boolean = false,
   val escalationEnabled: Boolean = false,
   val escalationAfterMinutes: Int = 2,
-  val escalationTones: List<AlarmTone> = AlarmTone.defaults()
+  val escalationTones: List<AlarmTone> = AlarmTone.defaults(),
+  val progressiveDifficulty: Boolean = false,
+  val wakeRandom: Boolean = false,
+  val wakeMinMinutes: Int = 3,
+  val wakeMaxMinutes: Int = 7,
+  val pauseUntil: Long = 0,
+  val skipAt: Long = 0,
+  val skipOneTime: Boolean = false,
+  val skipDate: String = ""
 ) {
   fun json() = JSONObject().put("id", id).put("label", label).put("hour", hour).put("minute", minute)
     .put("days", JSONArray(days.sorted())).put("enabled", enabled).put("snoozeMinutes", snoozeMinutes)
@@ -84,8 +104,14 @@ data class AlarmDraft(
     .put("maxSnoozes", maxSnoozes).put("shuffleTasks", shuffleTasks).put("vibrate", vibrate)
     .put("escalationEnabled", escalationEnabled).put("escalationAfterMinutes", escalationAfterMinutes)
     .put("escalationTones", JSONArray(escalationTones.map { it.json() }))
+    .put("progressiveDifficulty", progressiveDifficulty).put("wakeRandom", wakeRandom)
+    .put("wakeMinMinutes", wakeMinMinutes).put("wakeMaxMinutes", wakeMaxMinutes)
+    .put("pauseUntil", pauseUntil).put("skipAt", skipAt).put("skipOneTime", skipOneTime).put("skipDate",skipDate)
 
   fun validate() {
+    require(pauseUntil >= 0 && skipAt >= 0) { "Invalid schedule exception" }
+    if(skipDate.isNotEmpty()) require(runCatching { java.time.LocalDate.parse(skipDate) }.isSuccess) { "Invalid skipped date" }
+    if(wakeEnabled && wakeRandom) require(wakeMinMinutes in 1..1440 && wakeMaxMinutes in wakeMinMinutes..1440) { "Choose a random check range of 1–1440 minutes" }
     require(hour.toIntOrNull() in 0..23 && minute.toIntOrNull() in 0..59) { "Enter a valid 24-hour time." }
     require(snoozeMinutes in 1..60) { "Choose a snooze length from 1 to 60 minutes." }
     require(maxSnoozes in 0..10) { "Choose 0–10 snoozes; 0 means unlimited." }
@@ -101,6 +127,12 @@ data class AlarmDraft(
     }
     val configured = dismissTasks + snoozeTasks + if (wakeEnabled) (if (wakeMode == "tasks") wakeTasks else emptyList()) + (if (!wakeReuseDismissTasks) wakeRetryTasks else emptyList()) else emptyList()
     for (task in configured) {
+      when(task.kind) {
+        "walk" -> require(task.stepTarget in 5..200) { "Choose 5–200 steps" }
+        "light" -> { require(task.lightLux in 50..2000) { "Choose 50–2000 lux" }; require(task.lightHoldSeconds in 2..30) { "Choose 2–30 seconds" } }
+        "maze" -> require(task.controlMode in listOf("tilt","touch")) { "Choose tilt or touch controls" }
+      }
+      if(task.kind in listOf("walk","light","maze")) require(task.fallbackKind in listOf("math","text")) { "Choose a math or text fallback" }
       if (task.kind == "breakout") {
         require(task.gameSeconds in 5..3600) { "Choose 5–3600 seconds of active play." }
         require(task.gameIdleSeconds in 5..120) { "Choose a 5–120 second idle reset." }
@@ -130,7 +162,8 @@ data class AlarmDraft(
         value.optString("flashlightMode", "off"), value.optBoolean("randomDismiss"),
         value.optInt("maxSnoozes", 0), value.optBoolean("shuffleTasks"), value.optBoolean("vibrate"),
         value.optBoolean("escalationEnabled"), value.optInt("escalationAfterMinutes", 2),
-        value.optJSONArray("escalationTones")?.let { tones -> (0 until tones.length()).map { AlarmTone.from(tones.getJSONObject(it)) } } ?: AlarmTone.defaults())
+        value.optJSONArray("escalationTones")?.let { tones -> (0 until tones.length()).map { AlarmTone.from(tones.getJSONObject(it)) } } ?: AlarmTone.defaults(), value.optBoolean("progressiveDifficulty"), value.optBoolean("wakeRandom"),
+        value.optInt("wakeMinMinutes", 3), value.optInt("wakeMaxMinutes", 7), value.optLong("pauseUntil"), value.optLong("skipAt"), value.optBoolean("skipOneTime"), value.optString("skipDate"))
     }
   }
 }

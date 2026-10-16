@@ -51,9 +51,9 @@ internal class WakeChecks(
     if (!alarm.optBoolean("wakeEnabled")) return
     check(Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()) { "Restore Alarms & reminders access before dismissing this alarm" }
     val startedAt = now()
-    val dueTime = startedAt + if (test) 0L else alarm.optInt("wakeDelayMinutes", 5) * 60_000L
+    val dueTime = startedAt + if (test) 0L else WakeUpPolicy.delayMs(alarm)
     val record = JSONObject().put("sessionId", UUID.randomUUID().toString()).put("alarm", JSONObject(alarm.toString()))
-      .put("test", test).put("stage", "scheduled").put("dueAt", dueTime).put("reminderAt", startedAt + 120_000L)
+      .put("baseAlarm", JSONObject(alarm.toString())).put("test", test).put("stage", "scheduled").put("dueAt", dueTime).put("reminderAt", startedAt + 120_000L)
       .put("deadlineAt", dueTime + alarm.optInt("wakeResponseMinutes", 5) * 60_000L)
       .put("taskIndex", 0).put("round", 1).put("kind", JSONObject.NULL).put("prompt", JSONObject.NULL)
     // Schedule before removing the previous cycle so a permission failure cannot erase it.
@@ -105,7 +105,7 @@ internal class WakeChecks(
       record.put("stage", "waiting")
       if (record.getJSONObject("alarm").optString("wakeMode", "yes_no") == "tasks") {
         val alarm = record.getJSONObject("alarm")
-        if (alarm.optBoolean("shuffleTasks")) alarm.put("wakeTasks", TaskOrder.arrange(alarm.getJSONArray("wakeTasks"), true))
+        alarm.put("wakeTasks", TaskOrder.arrange(WakeUpPolicy.effective(alarm.getJSONArray("wakeTasks"), alarm), alarm.optBoolean("shuffleTasks")))
         SessionTasks.start(record, record.getJSONObject("alarm").getJSONArray("wakeTasks"))
       }
       put(record)
@@ -164,6 +164,12 @@ internal class WakeChecks(
       else -> put(record)
     }
   }
+  fun completeNative(record: JSONObject, challengeId: String) {
+    when(SessionTasks.completeNative(record,record.getJSONObject("alarm").getJSONArray("wakeTasks"),challengeId)) {
+      SessionTasks.Result.COMPLETE -> remove(record)
+      else -> put(record)
+    }
+  }
   fun deadline(id: String) {
     val record = store.checks().find { it.getString("sessionId") == id } ?: return
     if (record.getString("stage") == "retrying" || now() >= record.getLong("deadlineAt")) retry(record)
@@ -187,7 +193,7 @@ internal class WakeChecks(
   fun visible(): JSONObject? = store.checks().filter { it.getString("stage") == "waiting" }
     .minByOrNull { it.getLong("deadlineAt") }?.let {
       JSONObject(it.toString()).apply {
-        remove("answer")
+        remove("answer"); remove("baseAlarm")
         put("totalTasks", getJSONObject("alarm").optJSONArray("wakeTasks")?.length() ?: 0)
       }
     }

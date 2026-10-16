@@ -9,6 +9,9 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
+import android.os.PowerManager
+import android.hardware.Sensor
+import android.hardware.SensorManager
 import androidx.core.app.NotificationManagerCompat
 import org.json.JSONArray
 import org.json.JSONObject
@@ -28,7 +31,14 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     val enabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
     val nm = context.getSystemService(NotificationManager::class.java)
     fun channelEnabled(id: String) = nm.getNotificationChannel(id)?.importance != NotificationManager.IMPORTANCE_NONE
-    return JSONObject().put("exactAlarms", Build.VERSION.SDK_INT < 31 || manager.canScheduleExactAlarms())
+    val sensors = context.getSystemService(SensorManager::class.java)
+    val power = context.getSystemService(PowerManager::class.java)
+    return JSONObject().put("batteryUnrestricted", power.isIgnoringBatteryOptimizations(context.packageName))
+      .put("stepSensor", sensors.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) != null || sensors.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) != null)
+      .put("lightSensor", sensors.getDefaultSensor(Sensor.TYPE_LIGHT) != null)
+      .put("tiltSensor", sensors.getDefaultSensor(Sensor.TYPE_GRAVITY) != null || sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null)
+      .put("activityPermission", Build.VERSION.SDK_INT < 29 || context.checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED)
+      .put("exactAlarms", Build.VERSION.SDK_INT < 31 || manager.canScheduleExactAlarms())
       .put("notifications", enabled && channelEnabled(RingingService.CHANNEL))
       .put("wakeNotifications", enabled && channelEnabled(WakeChecks.CHANNEL))
       .put("fullScreen", Build.VERSION.SDK_INT < 34 || nm.canUseFullScreenIntent())
@@ -51,6 +61,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
       .put("label", it.getJSONObject("alarm").getString("label")).put("dueAt", it.getLong("dueAt"))
       .put("deadlineAt", it.getLong("deadlineAt")).put("stage", it.getString("stage")).put("test", it.optBoolean("test")) }
     JSONObject().put("alarms", JSONArray(store.alarms())).put("active", active ?: JSONObject.NULL)
+      .put("deliveryTest", JSONObject(context.getSharedPreferences("task_alarm_health", Context.MODE_PRIVATE).getString("delivery", "{}")!!))
       .put("gameStats", GameScores(context).state())
       .put("wakeCheck", wakeChecks.visible() ?: JSONObject.NULL).put("wakeChecks", JSONArray(pending))
       .put("readiness", readiness()).toString()
@@ -61,6 +72,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     require(alarm.getInt("hour") in 0..23 && alarm.getInt("minute") in 0..59) { "Invalid time" }
     require(alarm.getInt("snoozeMinutes") in 1..60) { "Snooze must be 1–60 minutes" }
     EscalationPolicy.validate(alarm)
+    WakeUpPolicy.validate(alarm)
     require(alarm.optInt("maxSnoozes", 0) in 0..10) { "Choose 0–10 snoozes; 0 means unlimited" }
     require(alarm.optString("flashlightMode", "off") in listOf("off", "steady", "flashing")) { "Invalid flashlight mode" }
     require(alarm.getString("label").length <= 120) { "Alarm name is too long" }
@@ -78,7 +90,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
         ((key == "wakeTasks" && alarm.optString("wakeMode", "yes_no") == "tasks") || (key == "wakeRetryTasks" && !alarm.optBoolean("wakeReuseDismissTasks", true))))
       for (i in 0 until tasks.length()) {
         val task = tasks.getJSONObject(i)
-        require(task.getString("kind") in listOf("text", "math", "barcode", "breakout", "memory")) { "Unknown task" }
+        require(task.getString("kind") in listOf("text", "math", "barcode", "breakout", "memory", "maze", "walk", "light")) { "Unknown task" }
         if (task.getString("kind") == "breakout" && used) {
           require(task.optInt("gameSeconds", 60) in 5..3600) { "Choose 5–3600 seconds of active play" }
           require(task.optInt("gameIdleSeconds", 20) in 5..120) { "Choose a 5–120 second idle reset" }
@@ -95,7 +107,12 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
 
   fun save(json: String) = synchronized(LOCK) {
     val alarm = JSONObject(json); validate(alarm)
-    alarm.remove("snoozed"); alarm.remove("wakeRetry")
+    val previous = store.find(alarm.getString("id"))
+    if(previous?.optBoolean("skipOneTime") == true && !previous.getBoolean("enabled") && alarm.getBoolean("enabled")) { alarm.remove("skipAt"); alarm.remove("skipDate"); alarm.remove("skipOneTime") }
+    val scheduleOnly = previous != null && listOf("pauseUntil","skipAt","skipOneTime","skipDate").any { previous.opt(it)?.toString() != alarm.opt(it)?.toString() } && com.taskalarm.app.AlarmDraft.from(previous).copy(pauseUntil=alarm.optLong("pauseUntil"),skipAt=alarm.optLong("skipAt"),skipOneTime=alarm.optBoolean("skipOneTime"),skipDate=alarm.optString("skipDate")) == com.taskalarm.app.AlarmDraft.from(alarm)
+    if(scheduleOnly && previous!!.optBoolean("snoozed")) {
+      listOf("snoozed","wakeRetry","snoozeCount","escalationLatched","nextAt").forEach { key -> if(previous.has(key)) alarm.put(key,previous.get(key)) }
+    } else { alarm.remove("snoozed"); alarm.remove("wakeRetry") }
     require(store.sessions().none { it.getJSONObject("alarm").getString("id") == alarm.getString("id") }) { "Finish this alarm before editing it" }
     if (alarm.getBoolean("enabled")) {
       val access = readiness()
@@ -103,10 +120,44 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
       check(access.getBoolean("notifications")) { "Allow alarm notifications before enabling an alarm" }
       check(!alarm.optBoolean("wakeEnabled") || access.getBoolean("wakeNotifications")) { "Allow wake-up check notifications before enabling this alarm" }
       checkFlashlightAccess(alarm, access)
-      alarm.put("nextAt", next(alarm)); schedule(alarm)
+      if(!alarm.optBoolean("snoozed")) alarm.put("nextAt", next(alarm))
+      schedule(alarm)
     } else { manager.cancel(receiver(alarm.getString("id"))); alarm.remove("nextAt") }
     store.put(alarm)
-    wakeChecks.cancelForAlarm(alarm.getString("id"))
+    if(!scheduleOnly) wakeChecks.cancelForAlarm(alarm.getString("id"))
+  }
+
+  fun preview(json: String): Long = next(JSONObject(json))
+  fun skipNext(id: String, undo: Boolean = false) = synchronized(LOCK) {
+    val alarm = store.find(id) ?: error("Alarm no longer exists")
+    check(!alarm.optBoolean("snoozed")) { "Finish the active snooze before changing a skip" }
+    if (undo) {
+      if (alarm.optBoolean("skipOneTime")) alarm.put("enabled", true)
+      alarm.remove("skipAt"); alarm.remove("skipOneTime"); alarm.remove("skipDate")
+    } else {
+      check(alarm.getBoolean("enabled")) { "Enable this alarm first" }
+      check(alarm.optLong("skipAt") <= now()) { "Undo the current skip before choosing another" }
+      val skipped=next(alarm)
+      alarm.put("skipAt", skipped).put("skipDate",Instant.ofEpochMilli(skipped).atZone(ZoneId.systemDefault()).toLocalDate().toString())
+      if (alarm.getJSONArray("days").length() == 0) alarm.put("enabled", false).put("skipOneTime", true)
+    }
+    if (alarm.getBoolean("enabled")) {
+      check(readiness().getBoolean("exactAlarms")) { "Restore alarm access first" }
+      alarm.put("nextAt", next(alarm)); schedule(alarm)
+    } else { manager.cancel(receiver(id)); alarm.remove("nextAt") }
+    store.put(alarm)
+  }
+  private fun deliveryStatus(status: String, at: Long) {
+    context.getSharedPreferences("task_alarm_health", Context.MODE_PRIVATE).edit()
+      .putString("delivery", JSONObject().put("status", status).put("scheduledAt", at).put("updatedAt", now()).toString()).commit()
+  }
+  fun testDelivery() = synchronized(LOCK) {
+    check(readiness().getBoolean("exactAlarms") && readiness().getBoolean("notifications")) { "Allow alarms and notifications first" }
+    val old = store.alarms().filter { it.optBoolean("deliveryTest") }
+    old.forEach { manager.cancel(receiver(it.getString("id"))); store.delete(it.getString("id")) }
+    val alarm = com.taskalarm.app.AlarmDraft(label = "Alarm delivery test", days = emptySet(), dismissTasks = emptyList()).json()
+      .put("deliveryTest", true).put("nextAt", now() + 30_000)
+    schedule(alarm); store.put(alarm); deliveryStatus("scheduled", alarm.getLong("nextAt"))
   }
 
   fun delete(id: String) = synchronized(LOCK) {
@@ -117,7 +168,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
   private fun next(alarm: JSONObject): Long {
     val days = alarm.getJSONArray("days")
     return Timing.next(alarm.getInt("hour"), alarm.getInt("minute"), (0 until days.length()).map { days.getInt(it) }.toSet(),
-      Instant.ofEpochMilli(now()).atZone(ZoneId.systemDefault()))
+      Instant.ofEpochMilli(now()).atZone(ZoneId.systemDefault()), alarm.optLong("pauseUntil"), alarm.optLong("skipAt"), alarm.optString("skipDate"))
   }
   private fun schedule(alarm: JSONObject) {
     val show = PendingIntent.getActivity(context, 0, launchIntent(), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -130,6 +181,10 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     val alarm = store.find(id) ?: return@synchronized
     if (!alarm.getBoolean("enabled") || alarm.optLong("nextAt", Long.MAX_VALUE) > now() + 2000) return@synchronized
     wakeChecks.cancelForAlarm(id)
+    if (alarm.optBoolean("deliveryTest")) {
+      deliveryStatus("delivered", alarm.optLong("nextAt"))
+      enqueue(alarm, true); store.delete(id); ring(); return@synchronized
+    }
     enqueue(alarm, false, alarm.optBoolean("wakeRetry")); ring()
     alarm.remove("snoozed"); alarm.remove("wakeRetry")
     if (alarm.getJSONArray("days").length() > 0) { alarm.put("nextAt", next(alarm)); schedule(alarm) }
@@ -183,7 +238,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     }
   }
   private fun retryWake(record: JSONObject) {
-    enqueue(record.getJSONObject("alarm"), record.optBoolean("test"), true)
+    enqueue(record.optJSONObject("baseAlarm") ?: record.getJSONObject("alarm"), record.optBoolean("test"), true)
     ring()
   }
   fun wakeEvent(id: String, phase: String) = synchronized(LOCK) {
@@ -206,10 +261,10 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     val alarm = session.getJSONObject("alarm")
     EscalationPolicy.refresh(session, AlarmClockStamp.current(context, now()))
     if (action == "snooze") check(alarm.optInt("maxSnoozes", 0) == 0 || alarm.optInt("snoozeCount") < alarm.optInt("maxSnoozes")) { "Snooze limit reached. Complete your dismiss tasks." }
-    if (alarm.optBoolean("shuffleTasks")) {
-      val key = if (action == "snooze") "snoozeTasks" else "dismissTasks"
-      alarm.put(key, TaskOrder.arrange(alarm.getJSONArray(key), true))
-    }
+    val key = if (action == "snooze") "snoozeTasks" else "dismissTasks"
+    val base = session.optJSONObject("baseAlarm") ?: alarm
+    val original = if (action == "dismiss" && session.optBoolean("wakeRetry") && !base.optBoolean("wakeReuseDismissTasks", true)) base.optJSONArray("wakeRetryTasks") ?: JSONArray() else base.getJSONArray(key)
+    alarm.put(key, TaskOrder.arrange(WakeUpPolicy.effective(original, alarm), alarm.optBoolean("shuffleTasks")))
     session.put("action", action).put("muted", false)
     val tasks = tasks(session)
     if (tasks.length() == 0) finish(sessions)
@@ -234,7 +289,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     check(!session.isNull("action")) { "Choose dismiss or snooze first" }
     return@synchronized when (SessionTasks.submit(session, tasks(session), challengeId, supplied)) {
       SessionTasks.Result.WRONG -> false
-      SessionTasks.Result.NEXT -> { store.sessions(sessions); true }
+      SessionTasks.Result.NEXT -> { store.sessions(sessions); ring(); true }
       SessionTasks.Result.COMPLETE -> { finish(sessions); true }
     }
   }
@@ -257,7 +312,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
         if (check) wakeChecks.completeGame(record, challengeId)
         else when (SessionTasks.completeGame(record, taskList, challengeId)) {
           SessionTasks.Result.COMPLETE -> finish(sessions!!)
-          else -> store.sessions(sessions!!)
+          else -> { store.sessions(sessions!!); ring() }
         }
         scores.record(frame.score, completed = true)
         games.remove(challengeId)
@@ -279,9 +334,73 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     if (check) wakeChecks.saveGame(record) else store.sessions(sessions!!)
   }
 
+  private fun nativeRecord(sessionId: String, wake: Boolean): JSONObject =
+    if(wake) wakeChecks.gameRecord(sessionId) else current(store.sessions(),sessionId)
+  fun startNative(sessionId: String, challengeId: String, wake: Boolean) = synchronized(LOCK) {
+    val record = nativeRecord(sessionId,wake)
+    check(record.optString("challengeId") == challengeId && record.optString("kind") in listOf("maze", "walk", "light")) { "Task changed" }
+    val task = (if(wake) record.getJSONObject("alarm").getJSONArray("wakeTasks") else tasks(record)).getJSONObject(record.getInt("taskIndex"))
+    nativeGames.values.forEach { it.stop() }
+    val runtime = nativeGames.getOrPut(challengeId) {
+      if(nativeGames.size >= 16) { nativeGames.values.first().stop(); nativeGames.remove(nativeGames.keys.first()) }
+      NativeChallenge(context,task,record)
+    }
+    runtime.start()
+  }
+  fun stopNative(challengeId: String) = synchronized(LOCK) {
+    val runtime = nativeGames.remove(challengeId) ?: return@synchronized
+    val frame = runtime.frame(0f,0f)
+    val sessions=store.sessions()
+    val record=sessions.firstOrNull { it.optString("challengeId")==challengeId }
+    if(record != null) { runtime.checkpoint(record,frame); store.sessions(sessions) }
+    else {
+      val checks=store.checks()
+      checks.firstOrNull { it.optString("challengeId")==challengeId }?.let { runtime.checkpoint(it,frame); store.checks(checks) }
+    }
+    runtime.stop()
+  }
+  fun calibrateNative(challengeId: String) = synchronized(LOCK) { nativeGames[challengeId]?.calibrate() }
+  fun nativeFrame(sessionId: String, challengeId: String, wake: Boolean, x: Float = 0f, y: Float = 0f): NativeFrame = synchronized(LOCK) {
+    val sessions = if(wake) null else store.sessions()
+    val record = if(wake) wakeChecks.gameRecord(sessionId) else current(sessions!!,sessionId)
+    check(record.optString("challengeId") == challengeId) { "Task changed" }
+    val runtime = nativeGames[challengeId] ?: error("Task is paused")
+    val frame = runtime.frame(x,y)
+    val time = SystemClock.elapsedRealtime()
+    if(frame.complete || time - record.optLong("nativeSavedAt",-1000) >= 1000 || record.optLong("nativeSavedAt") > time || frame.unavailable != record.optString("nativeUnavailable").ifEmpty { null }) {
+      runtime.checkpoint(record,frame); record.put("nativeSavedAt",time)
+      if(frame.complete) {
+        runtime.stop(); nativeGames.remove(challengeId)
+        if(wake) wakeChecks.completeNative(record,challengeId)
+        else when(SessionTasks.completeNative(record,tasks(record),challengeId)) {
+          SessionTasks.Result.COMPLETE -> finish(sessions!!)
+          else -> { store.sessions(sessions!!); ring() }
+        }
+      } else if(wake) wakeChecks.saveGame(record) else store.sessions(sessions!!)
+    }
+    frame
+  }
+  fun nativeFallback(sessionId: String, challengeId: String, wake: Boolean) = synchronized(LOCK) {
+    val sessions = if(wake) null else store.sessions()
+    val record = if(wake) wakeChecks.gameRecord(sessionId) else current(sessions!!,sessionId)
+    check(record.optString("challengeId") == challengeId && record.optString("nativeUnavailable").isNotEmpty()) { "Fallback becomes available if the sensor cannot respond" }
+    val list = if(wake) record.getJSONObject("alarm").getJSONArray("wakeTasks") else tasks(record)
+    val task = list.getJSONObject(record.getInt("taskIndex"))
+    check(task.getString("kind") in listOf("walk", "light", "maze"))
+    nativeGames.remove(challengeId)?.stop()
+    task.put("kind",task.optString("fallbackKind","math"))
+    SessionTasks.challenge(record,list)
+    if(wake) wakeChecks.saveGame(record) else { store.sessions(sessions!!); ring() }
+  }
+
   private fun finish(sessions: MutableList<JSONObject>) {
     val session = sessions.first()
     val base = JSONObject((session.optJSONObject("baseAlarm") ?: session.getJSONObject("alarm")).toString())
+    store.find(base.getString("id"))?.let { latest ->
+      listOf("pauseUntil","skipAt","skipOneTime","skipDate").forEach { key -> if(latest.has(key)) base.put(key,latest.get(key)) else base.remove(key) }
+    }
+    nativeGames.remove(session.optString("challengeId"))?.stop()
+    if (base.optBoolean("deliveryTest")) deliveryStatus("acknowledged", base.optLong("nextAt"))
     if (!session.getBoolean("test")) {
       if (session.getString("action") == "snooze") {
         check(readiness().getBoolean("exactAlarms")) { "Restore Alarms & reminders access before snoozing" }
@@ -298,6 +417,10 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
   fun restore(action: String?) = synchronized(LOCK) {
     if (!readiness().getBoolean("exactAlarms")) return@synchronized
     for (alarm in store.alarms().filter { it.getBoolean("enabled") }) {
+      if (alarm.optBoolean("deliveryTest")) {
+        if (alarm.optLong("nextAt") > now()) schedule(alarm) else { store.delete(alarm.getString("id")); deliveryStatus("not observed", alarm.optLong("nextAt")) }
+        continue
+      }
       val missedSnooze = alarm.optBoolean("snoozed") && alarm.optLong("nextAt") <= now()
       if (!alarm.optBoolean("snoozed") || missedSnooze) {
         alarm.put("nextAt", next(alarm))
@@ -310,5 +433,5 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     wakeChecks.restore()
   }
   fun ring() { context.startForegroundService(Intent(context, RingingService::class.java)) }
-  companion object { val LOCK = Any(); private val games = linkedMapOf<String, BreakoutGame>() }
+  companion object { val LOCK = Any(); private val games = linkedMapOf<String, BreakoutGame>(); private val nativeGames = linkedMapOf<String, NativeChallenge>() }
 }

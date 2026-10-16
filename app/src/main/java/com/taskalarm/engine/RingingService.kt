@@ -118,13 +118,14 @@ class RingingService : Service() {
       pulseRunning = true; handler.postDelayed(escalationPulse, 1000)
     }
     val flashlightMode = alarm.optString("flashlightMode", "off")
-    if (flashlightMode != "off" && !scannerActive) {
+    val measuringLight = activeRecord(false)?.optString("kind") == "light"
+    if (flashlightMode != "off" && !scannerActive && !measuringLight) {
       if (flashlightWakeLock == null) flashlightWakeLock = getSystemService(PowerManager::class.java)
         .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TaskAlarm:flashlight").apply { acquire() }
     } else {
       flashlightWakeLock?.let { if (it.isHeld) it.release() }; flashlightWakeLock = null
     }
-    flashlight.update(flashlightMode, scannerActive)
+    flashlight.update(flashlightMode, scannerActive || measuringLight)
     vibration.update(alarm.optBoolean("vibrate"))
     return START_STICKY
   }

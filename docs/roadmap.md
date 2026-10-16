@@ -1,5 +1,7 @@
 # Extension and release roadmap
 
+The 0.11.0 test build implements all eight accepted wake-up ideas: alarm health, schedule exceptions, progressive difficulty, randomized checks, a tilt maze, walking and light tasks, and routine presets. See the [detailed implementation plan](wake-up-features-plan.md) for scope, ordering, and acceptance checks. Physical-device verification is still required.
+
 ## 1. Verify and harden Android delivery
 
 Run the physical-device matrix in `device-testing.md`. Add direct-boot storage/scheduling, user-visible delivery diagnostics, accessibility review, sound-library cleanup, and migrations for alarm definitions and active sessions. Preserve scheduled alarms and their task configurations during updates. Define an explicit recovery policy for a lost barcode or unavailable camera before public release.
@@ -45,3 +47,5 @@ Add a sound preview with a stop control, storage management, normalization progr
 0.5.0 adds a memory-sequence task, optional per-occurrence snooze limits, shuffled task order, vibration, and locally bundled sound presets. Further candidates: optional progressive difficulty after snoozing, walking tasks with sensor capability checks, explicit lost-barcode recovery choices, and signed downloadable content once a server and signing keys are configured. All challenge features should remain optional and preserve a reviewable configuration preview.
 
 0.6.0 adds optional maximum-volume escalation for unanswered alarms or two completed snoozes, with an editable 45-second tone playlist, slot recovery, and volume restoration.
+
+0.11.0 combines the five wake-up milestones: alarm health and delivery test, skip/pause scheduling, progressive difficulty, randomized check timing, native tilt/touch maze, walking and ambient-light tasks with configured fallbacks, and independent local routine presets. See `device-testing.md` for the physical validation matrix.

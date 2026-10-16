@@ -45,6 +45,7 @@ internal fun TaskAlarmApp(activity: MainActivity) {
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var scanAction by remember { mutableStateOf<((String) -> Unit)?>(null) }
+    var health by rememberSaveable { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<AlarmDraft?>(null) }
     val scope = rememberCoroutineScope()
     suspend fun refresh() {
@@ -72,10 +73,10 @@ internal fun TaskAlarmApp(activity: MainActivity) {
     val wakeCheck = state?.optJSONObject("wakeCheck")
     val draft = draftJson?.let { AlarmDraft.from(JSONObject(it)) }
     LaunchedEffect(active?.optString("sessionId"), wakeCheck?.optString("sessionId")) { scanAction = null }
-    BackHandler(enabled = scanAction != null || active != null || wakeCheck != null || draft != null) {
+    BackHandler(enabled = scanAction != null || active != null || wakeCheck != null || draft != null || health) {
       if (scanAction != null) scanAction = null
       else if (active == null && wakeCheck != null) activity.moveTaskToBack(true)
-      else if (active == null && !busy) draftJson = null
+      else if (active == null && !busy) { if(health) health = false else draftJson = null }
     }
     fun submit(session: JSONObject, check: Boolean, answer: String) {
       work {
@@ -112,6 +113,9 @@ internal fun TaskAlarmApp(activity: MainActivity) {
           wakeCheck != null -> WakeCheckContent(wakeCheck, busy,
             onReply = { awake -> work { withContext(Dispatchers.IO) { activity.engine.respondWake(wakeCheck.getString("sessionId"), awake) } } },
             onSubmit = { submit(wakeCheck, true, it) }, onScan = { scanAction = { submit(wakeCheck, true, it) } })
+          health -> HealthScreen(state, onBack = { health = false },
+            onAccess = { try { activity.openAccess(it) } catch(failure: Exception) { error = failure.message } },
+            onTest = { work { withContext(Dispatchers.IO) { activity.engine.testDelivery() } } })
           draft != null -> AlarmEditorContent(draft, state?.optJSONObject("readiness"), busy,
             onChange = { if (!busy) draftJson = it.json().toString() },
             onBack = { draftJson = null }, onSave = { prepareAndRun(false) }, onTest = { prepareAndRun(true) },
@@ -142,6 +146,7 @@ internal fun TaskAlarmApp(activity: MainActivity) {
               }
             } })
           else -> HomeContent(state, busy,
+            onHealth = { health = true }, onSkip = { alarm, undo -> work { withContext(Dispatchers.IO) { activity.engine.skipNext(alarm.id,undo) } } },
             onAdd = { draftJson = AlarmDraft().json().toString() }, onEdit = { draftJson = it.json().toString() },
             onToggle = { alarm, enabled -> work { withContext(Dispatchers.IO) { activity.engine.save(alarm.copy(enabled = enabled).json().toString()) } } },
             onDelete = { deleteTarget = it },
@@ -160,26 +165,26 @@ internal fun TaskAlarmApp(activity: MainActivity) {
 }
 
 @Composable
-private fun Page(content: @Composable ColumnScope.() -> Unit) {
+internal fun Page(content: @Composable ColumnScope.() -> Unit) {
   Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(22.dp),
     verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
 }
 @Composable
-private fun CardBlock(content: @Composable ColumnScope.() -> Unit) {
+internal fun CardBlock(content: @Composable ColumnScope.() -> Unit) {
   Surface(color = Panel, shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth()) {
     Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
   }
 }
 @Composable
-private fun Eyebrow(text: String) { Text(text, color = Gold, style = MaterialTheme.typography.labelSmall, letterSpacing = 2.sp) }
+internal fun Eyebrow(text: String) { Text(text, color = Gold, style = MaterialTheme.typography.labelSmall, letterSpacing = 2.sp) }
 @Composable
-private fun Body(text: String) { Text(text, color = Muted, style = MaterialTheme.typography.bodyMedium) }
+internal fun Body(text: String) { Text(text, color = Muted, style = MaterialTheme.typography.bodyMedium) }
 @Composable
-private fun Primary(text: String, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun Primary(text: String, enabled: Boolean = true, onClick: () -> Unit) {
   Button(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) { Text(text) }
 }
 @Composable
-private fun Secondary(text: String, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun Secondary(text: String, enabled: Boolean = true, onClick: () -> Unit) {
   OutlinedButton(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(text) }
 }
 @Composable
@@ -198,12 +203,13 @@ private fun AccessCard(readiness: JSONObject?, onAccess: (String) -> Unit) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HomeContent(state: JSONObject?, busy: Boolean, onAdd: () -> Unit, onEdit: (AlarmDraft) -> Unit,
-  onToggle: (AlarmDraft, Boolean) -> Unit, onDelete: (AlarmDraft) -> Unit, onTest: (AlarmDraft) -> Unit, onAccess: (String) -> Unit) {
+  onHealth: () -> Unit, onSkip: (AlarmDraft, Boolean) -> Unit, onToggle: (AlarmDraft, Boolean) -> Unit, onDelete: (AlarmDraft) -> Unit, onTest: (AlarmDraft) -> Unit, onAccess: (String) -> Unit) {
   Page {
     Spacer(Modifier.height(10.dp)); Eyebrow("TASK ALARM")
     Text("A better start.", style = MaterialTheme.typography.headlineLarge)
     Body("A little challenge between you and the snooze button.")
     AccessCard(state?.optJSONObject("readiness"), onAccess)
+    Secondary("Alarm health & delivery test", !busy, onHealth)
     Text("Your alarms", style = MaterialTheme.typography.titleLarge)
     Primary("+ Add alarm", !busy, onAdd)
     val checks = state?.optJSONArray("wakeChecks")
@@ -217,7 +223,7 @@ private fun HomeContent(state: JSONObject?, busy: Boolean, onAdd: () -> Unit, on
       }
     }
     val array = state?.optJSONArray("alarms")
-    val alarms = if (array == null) emptyList() else (0 until array.length()).map { array.getJSONObject(it) }
+    val alarms = if (array == null) emptyList() else (0 until array.length()).map { array.getJSONObject(it) }.filterNot { it.optBoolean("deliveryTest") }
       .sortedBy { it.getInt("hour") * 60 + it.getInt("minute") }
     if (state != null && alarms.isEmpty()) CardBlock {
       Text("07:00", fontSize = 46.sp, color = Lavender)
@@ -238,6 +244,8 @@ private fun HomeContent(state: JSONObject?, busy: Boolean, onAdd: () -> Unit, on
         Body("Snooze · ${summary(alarm.snoozeTasks)}")
         if (alarm.enabled && value.has("nextAt")) Text("Next: ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(value.getLong("nextAt")))}", color = Gold)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          if((alarm.skipDate.isNotEmpty() && alarm.skipDate >= java.time.LocalDate.now().toString()) || alarm.skipAt > System.currentTimeMillis() || alarm.skipOneTime) TextButton(enabled = !busy, onClick = { onSkip(alarm,true) }) { Text("Undo skip") }
+          else if(alarm.enabled) TextButton(enabled = !busy, onClick = { onSkip(alarm,false) }) { Text("Skip next") }
           TextButton(enabled = !busy, onClick = { onEdit(alarm) }) { Text("Edit") }
           TextButton(enabled = !busy, onClick = { onTest(alarm) }) { Text("Test now") }
           TextButton(enabled = !busy, onClick = { onDelete(alarm) }) { Text("Delete") }
@@ -246,7 +254,7 @@ private fun HomeContent(state: JSONObject?, busy: Boolean, onAdd: () -> Unit, on
     }
     val gameStats = state?.optJSONObject("gameStats")
     if (gameStats != null && (gameStats.optInt("breakoutBest") > 0 || gameStats.optInt("breakoutCompleted") > 0)) Body("Breakout best · ${gameStats.getInt("breakoutBest")} points · ${gameStats.getInt("breakoutCompleted")} tasks completed")
-    Body("Text, math, barcodes, memory, and Breakout work offline.")
+    Body("All tasks and games work offline. Sensor tasks include a configured fallback.")
     Spacer(Modifier.height(20.dp))
   }
 }
@@ -265,6 +273,7 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
     Eyebrow("MAKE THE MORNING YOURS")
     Text("Set your alarm", style = MaterialTheme.typography.headlineLarge)
     AccessCard(readiness, onAccess)
+    RoutineSettings(alarm,onChange)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
       OutlinedTextField(alarm.hour, { onChange(alarm.copy(hour = it.filter(Char::isDigit).take(2))) }, label = { Text("Hour · 24h") },
         singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f), textStyle = MaterialTheme.typography.headlineLarge)
@@ -283,6 +292,8 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
         onClick = { onChange(alarm.copy(days = if (index + 1 in alarm.days) alarm.days - (index + 1) else alarm.days + (index + 1))) }, label = { Text(label) }) }
     }
     Body(if (alarm.days.isEmpty()) "Once, at the next occurrence of this time." else "Repeats on selected days.")
+    ScheduleSettings(alarm,onChange)
+    DifficultySettings(alarm,onChange)
     ToggleRow("Shuffle task order", alarm.shuffleTasks) { onChange(alarm.copy(shuffleTasks = it)) }
     Body("Choose a new order when dismiss, snooze, or wake-up tasks start. Every configured task and round is still required.")
     listOf("dismiss", "snooze").forEach { action ->
@@ -366,7 +377,12 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
       ToggleRow("Check that I’m out of bed", alarm.wakeEnabled) { onChange(alarm.copy(wakeEnabled = it)) }
       Body("After dismissing, get a notification or pop-up asking if you’re up. No response by the deadline makes the alarm ring again. Choosing No rings it again immediately.")
       if (alarm.wakeEnabled) {
-        MinuteInput("Ask after dismissal (minutes)", alarm.wakeDelayMinutes) { onChange(alarm.copy(wakeDelayMinutes = it)) }
+        ToggleRow("Randomize check delay",alarm.wakeRandom) { onChange(alarm.copy(wakeRandom=it)) }
+        if(alarm.wakeRandom) {
+          MinuteInput("Earliest check (minutes)",alarm.wakeMinMinutes) { onChange(alarm.copy(wakeMinMinutes=it)) }
+          MinuteInput("Latest check (minutes)",alarm.wakeMaxMinutes) { onChange(alarm.copy(wakeMaxMinutes=it)) }
+          Body("Choose the actual check time once at dismissal. The advance notification shows that chosen time.")
+        } else MinuteInput("Ask after dismissal (minutes)", alarm.wakeDelayMinutes) { onChange(alarm.copy(wakeDelayMinutes = it)) }
         MinuteInput("Time to respond (minutes)", alarm.wakeResponseMinutes) { onChange(alarm.copy(wakeResponseMinutes = it)) }
         Body("For checks more than two minutes away, a notification appears two minutes after dismissal with the check time and a Dismiss check button. Dismissing early cancels that check and its repeat alarm.")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -413,13 +429,13 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
 }
 
 @Composable
-private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
   Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
     Text(label, modifier = Modifier.weight(1f)); Switch(checked, onChange)
   }
 }
 @Composable
-private fun MinuteInput(label: String, value: Int, onChange: (Int) -> Unit) {
+internal fun MinuteInput(label: String, value: Int, onChange: (Int) -> Unit) {
   OutlinedTextField(if (value == 0) "" else value.toString(), { onChange(it.filter(Char::isDigit).take(4).toIntOrNull() ?: 0) },
     label = { Text(label) }, supportingText = { Text("1–1440 minutes") }, singleLine = true,
     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
@@ -432,7 +448,7 @@ private fun TaskListEditor(alarm: AlarmDraft, action: String, onChange: (AlarmDr
       onRemove = { onChange(alarm.withTasks(action, alarm.tasks(action).filterNot { it.id == task.id })) }, onEnroll = { onEnroll(action, task.id) })
   }
   if (alarm.tasks(action).size < 10) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-    listOf("text", "math", "barcode", "breakout", "memory").forEach { kind -> OutlinedButton(onClick = { onChange(alarm.withTasks(action, alarm.tasks(action) + TaskDraft(kind = kind))) }) { Text("+ ${kind.replaceFirstChar(Char::uppercase)}") } }
+    listOf("text", "math", "barcode", "breakout", "memory", "maze", "walk", "light").forEach { kind -> OutlinedButton(onClick = { onChange(alarm.withTasks(action, alarm.tasks(action) + TaskDraft(kind = kind))) }) { Text("+ ${kind.replaceFirstChar(Char::uppercase)}") } }
   }
 }
 
@@ -441,11 +457,14 @@ private fun TaskListEditor(alarm: AlarmDraft, action: String, onChange: (AlarmDr
 private fun TaskCard(index: Int, task: TaskDraft, onChange: (TaskDraft) -> Unit, onRemove: () -> Unit, onEnroll: () -> Unit) {
   CardBlock {
     Text("${index + 1}. ${task.name}", style = MaterialTheme.typography.titleMedium)
-    if (task.kind != "barcode") {
+    if(task.kind in listOf("maze", "walk", "light")) ExtendedTaskSettings(task,onChange)
+    if (task.kind !in listOf("barcode", "walk", "light")) {
       FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("easy", "medium", "hard").forEach { level ->
         FilterChip(task.difficulty == level, { onChange(task.copy(difficulty = level)) }, label = { Text(level.replaceFirstChar(Char::uppercase)) })
       } }
-      if (task.kind == "breakout") {
+      if (task.kind == "maze") {
+        NativeTaskDemo(task)
+      } else if (task.kind == "breakout") {
         BreakoutPreview(task)
         Body("Difficulty changes ball speed and paddle size. Points are optional; only active play time completes this task.")
         OutlinedTextField(if (task.gameSeconds == 0) "" else task.gameSeconds.toString(), { onChange(task.copy(gameSeconds = it.filter(Char::isDigit).take(4).toIntOrNull() ?: 0)) },
@@ -460,7 +479,7 @@ private fun TaskCard(index: Int, task: TaskDraft, onChange: (TaskDraft) -> Unit,
         Text(task.example, color = Lavender, fontFamily = FontFamily.Monospace, fontSize = 21.sp)
         Body(when (task.kind) { "text" -> "Case sensitive. A fresh string each round."; "memory" -> "Watch 3, 5, or 7 numbered tiles flash, then tap them in the same order."; else -> "New numbers each round. Enter the answer." })
       }
-    } else {
+    } else if(task.kind == "barcode") {
       FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("any", "specific").forEach { mode ->
         FilterChip(task.barcodeMode == mode, { onChange(task.copy(barcodeMode = mode)) }, label = { Text(if (mode == "any") "Any barcode" else "Specific barcode") })
       } }
@@ -516,9 +535,10 @@ private fun ChallengeCard(session: JSONObject, tasks: List<TaskDraft>, prefix: S
   CardBlock {
     val task = tasks[session.getInt("taskIndex")]
     Eyebrow("$prefix · TASK ${session.getInt("taskIndex") + 1}/${tasks.size} · ROUND ${session.getInt("round")}/${task.rounds}")
-    Body(when (kind) { "text" -> "Type the text exactly, including capitals and symbols."; "math" -> "Solve the problem to keep going."; "breakout" -> "Active play completes the task. Points are just for fun."; "memory" -> "Watch the flashes, then repeat their order."; else -> "Get up and scan a barcode with your camera." })
+    Body(when (kind) { "text" -> "Type the text exactly, including capitals and symbols."; "math" -> "Solve the problem to keep going."; "breakout" -> "Active play completes the task. Points are just for fun."; "memory" -> "Watch the flashes, then repeat their order."; "maze" -> "Guide the ball through the checkpoints."; "walk" -> "Walk with the phone while this task is visible."; "light" -> "Turn on a room light or move to a brighter place."; else -> "Get up and scan a barcode with your camera." })
     Text(session.getString("prompt"), fontFamily = FontFamily.Monospace, fontSize = 25.sp, color = Lavender)
     if (kind == "breakout") BreakoutBoard(session, wake)
+    else if (kind in listOf("maze", "walk", "light")) NativeTaskBoard(session,wake)
     else if (kind == "memory") MemoryBoard(session, busy, onSubmit)
     else if (kind == "barcode") Primary("Open scanner", !busy, onScan)
     else {
