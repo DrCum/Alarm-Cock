@@ -36,7 +36,7 @@ internal fun MemoryBoard(session: JSONObject, busy: Boolean, onSubmit: (String) 
       } finally { highlighted = 0; showing = true }
     }
   }
-  val colors = listOf(Color(0xff30769a), Color(0xff955177), Color(0xff527b43), Color(0xff9a6a24))
+  val colors = listOf(Color(0xff574075), Color(0xff724866), Color(0xff3f635c), Color(0xff785a2d))
   Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
     Text(if (showing) "Watch the ${sequence.length()} flashes" else "Your turn · ${selected.length} / ${sequence.length()}", style = MaterialTheme.typography.titleMedium)
     for (row in 0..1) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -47,9 +47,9 @@ internal fun MemoryBoard(session: JSONObject, busy: Boolean, onSubmit: (String) 
           selected = next
           if (next.length == sequence.length()) { onSubmit(next); selected = "" }
         }, enabled = !showing && !busy, modifier = Modifier.weight(1f).height(76.dp),
-          colors = ButtonDefaults.buttonColors(containerColor = colors[number - 1], contentColor = Color.White,
-            disabledContainerColor = if (highlighted == number) Color(0xffffca7a) else Color(0xff252b3c),
-            disabledContentColor = if (highlighted == number) Color.Black else Color(0xff7a8195))) {
+          colors = ButtonDefaults.buttonColors(containerColor = colors[number - 1], contentColor = Folderstorm.Text,
+            disabledContainerColor = if (highlighted == number) Folderstorm.Gold else Folderstorm.Inset,
+            disabledContentColor = if (highlighted == number) Folderstorm.Background else Folderstorm.Muted)) {
           Text(number.toString(), style = MaterialTheme.typography.headlineMedium)
         }
       }

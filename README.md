@@ -108,9 +108,9 @@ There is no backend, downloadable catalog, JavaScript game host, OTA task distri
 
 ## Workspace verification
 
-On 2026-10-16, `:app:assembleDebug`, `:app:testDebugUnitTest`, and `:app:lintDebug` passed. All 82 tests passed, including active-time/AFK accounting, game/wake-check deadlines, memory sequences, snooze limits and recovery, task shuffling, sound assets, and flashlight/vibration service integration, escalation triggers and recovery, 45-second rotation, and volume restoration on API 28. Lint reported zero errors and 20 warnings, including diagnostics for the alarm-lifetime flashlight/rotation wake locks; the service releases each lock when its effect stops. APK signature verification and ZIP integrity checks passed. The standalone universal debug APK is approximately 36 MiB and includes ARM64, ARMv7, x86, and x86_64 native libraries.
+Version 0.12.1 passed `:app:assembleDebug`, `:app:testDebugUnitTest`, and `:app:lintDebug` on 2026-10-16. All 124 tests passed, including native edit-session autosave/recovery, independent alarm delivery, pending snooze preservation, steady-light timing, scheduling/timezone boundaries, wake checks, routines, sensor/game completion, and audio/escalation recovery. Lint reported zero errors and 32 warnings, including diagnostics for alarm-lifetime wake locks; the service releases each lock when its effect stops. Main text/button color pairs exceed 4.5:1 contrast. APK signing matches previous builds, and ZIP integrity and embedded APK hashes were verified. The standalone universal debug APK is approximately 36 MiB and includes ARM64, ARMv7, x86, and x86_64 native libraries.
 
-The user reported that basic ringing and task dismissal worked in 0.1.0. The volume controls, wake-up checks, advance reminders, flashlight modes, game/button controls, memory playback, vibration, bundled sounds, and escalation still require physical-device verification, especially Doze, notification actions, and reboot recovery. The 0.11.0 signing certificate matches 0.5.0 and earlier builds for installation over the existing app.
+The user reported that basic ringing and task dismissal worked in 0.1.0. The volume controls, wake-up checks, advance reminders, flashlight modes, game/button controls, memory playback, vibration, bundled sounds, and escalation still require physical-device verification, especially Doze, notification actions, and reboot recovery. The 0.12.1 signing certificate matches earlier builds for installation over the existing app.
 
 ## Browser download
 
@@ -143,3 +143,9 @@ The editor groups controls into collapsible sections. Morning routines stays abo
 Valid edits autosave after an 800 ms typing pause. Incomplete or invalid fields leave the last valid alarm in place and show a Not saved status. Done and Android Back flush valid changes before leaving. Exit without saving restores settings from the start of the visit, or removes an alarm created during that visit. Revert restores the visit's opening settings; on a freshly reopened alarm it can restore the previous edit. Recovery history persists locally and stays inside the editor.
 
 Native edit tokens serialize saving and rollback. Closed or superseded editors cannot write, and an alarm that rings/changes independently cannot be rolled back. Edits during a pending snooze retain its exact time/count. Alarm configuration changes keep the established wake-check cancellation behavior; restoring settings does not resurrect an already cancelled check or delivered alarm.
+
+### Folderstorm-inspired theme (0.12.1)
+
+The default theme uses the supplied Folderstorm screenshot as a visual reference: near-black backgrounds, plum panels with fine borders, lavender controls, warm white text, and small gold highlights. Dialogs, task previews, game boards, and the Android startup window share this palette. The memory task retains four distinct tile colors plus numbers, with a gold flash during playback. This is a screenshot-based interpretation, not extracted website CSS.
+
+Info buttons announce their section to screen readers. Autosave retries after alarm access changes, so granting a missing permission can save a waiting valid edit without retyping.

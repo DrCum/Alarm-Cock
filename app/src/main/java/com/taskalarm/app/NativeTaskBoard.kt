@@ -12,7 +12,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
@@ -151,16 +150,16 @@ private fun NativeTaskSession(task: TaskDraft, session: JSONObject?, wake: Boole
 @Composable
 private fun MazeField(frame: MazeFrame?) {
   Canvas(Modifier.fillMaxWidth().height(320.dp).semantics { contentDescription="Maze field. Follow numbered checkpoints with the ball." }) {
-    drawRect(Color(0xff101523))
+    drawRect(Folderstorm.Inset)
     if(frame==null) return@Canvas
-    frame.walls.forEach { drawRect(Color(0xffc4b4ff),Offset(it.x*size.width,it.y*size.height),Size(it.width*size.width,it.height*size.height)) }
+    frame.walls.forEach { drawRect(Folderstorm.Lavender,Offset(it.x*size.width,it.y*size.height),Size(it.width*size.width,it.height*size.height)) }
     val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color=android.graphics.Color.BLACK; textAlign=android.graphics.Paint.Align.CENTER; textSize=13.dp.toPx() }
     frame.checkpoints.forEachIndexed { i,p ->
       val center=Offset(p.x*size.width,p.y*size.height)
-      drawCircle(if(i < frame.reached) Color(0xff80ddd1) else Color(0xffffca7a),14.dp.toPx(),center)
+      drawCircle(if(i < frame.reached) Folderstorm.PaleLavender else Folderstorm.Gold,14.dp.toPx(),center)
       drawContext.canvas.nativeCanvas.drawText(if(i==frame.checkpoints.lastIndex) "E" else "${i+1}",center.x,center.y+5.dp.toPx(),paint)
     }
-    drawCircle(Color.White,MazeGame.RADIUS*size.width,Offset(frame.x*size.width,frame.y*size.height))
+    drawCircle(Folderstorm.Text,MazeGame.RADIUS*size.width,Offset(frame.x*size.width,frame.y*size.height))
   }
 }
 

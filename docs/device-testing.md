@@ -110,3 +110,9 @@ No physical-device checks have been executed in the cloud environment. Record de
 - Return from camera enrollment, audio pickers, Android permission settings, and task demos. Retain the edit session and saved state. Background/recreate the activity midway through editing and verify recovery and validation status.
 - Let an alarm ring while its editor is open. Its delivered session and next occurrence must survive stale autosaves and discard. Try an edit within one second of a due alarm: it must not postpone that ring. Edit/undo a pending snooze and verify its time and count stay intact.
 - Open Pause until: both the picker button and Info must remain visible. Check short pause status/Clear pause, next-ring preview, and weekday/weekend shortcuts in the time section. Long explanations must be available in scrollable modals without crowding the controls.
+
+## 0.12.1 theme
+
+- Check the list, expanded/collapsed editor sections, Info dialogs, text fields, chips, switches, task previews, and active alarm/wake-check screens for readable text and clear focus/selection states. Startup and navigation/status bars should match the near-black background.
+- Play Breakout, maze, and memory: walls, paddle, checkpoints, ball, numbered tiles, and playback flashes must stay distinct. Check memory tile labels both while playing back and while answering.
+- With TalkBack, Info buttons should announce the section name. Revoke alarm access, edit an enabled alarm, then grant access from the setup card; verify the pending valid edit autosaves after returning.

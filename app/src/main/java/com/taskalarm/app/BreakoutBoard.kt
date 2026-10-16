@@ -11,7 +11,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -54,7 +53,7 @@ internal fun BreakoutBoard(session: JSONObject, wake: Boolean) {
     frame?.let { game ->
       Text("${(game.playedMs / 1000)} / ${game.targetMs / 1000} active seconds", style = MaterialTheme.typography.titleMedium)
       LinearProgressIndicator(progress = { game.playedMs.toFloat() / game.targetMs }, modifier = Modifier.fillMaxWidth())
-      Text("Score ${game.score}  ·  Best ${game.best}", color = Color(0xffffca7a))
+      Text("Score ${game.score}  ·  Best ${game.best}", color = Folderstorm.Gold)
       Text(when {
         game.complete -> "Task complete"
         game.resets > 0 && game.playedMs == 0L -> "Idle reset. Move the paddle to start again."
@@ -89,13 +88,13 @@ internal fun BreakoutPreview(task: TaskDraft) {
 @Composable
 private fun BreakoutField(frame: BreakoutFrame?, modifier: Modifier) {
   Canvas(modifier) {
-    drawRoundRect(Color(0xff101523), cornerRadius = CornerRadius(12.dp.toPx()))
+    drawRoundRect(Folderstorm.Inset, cornerRadius = CornerRadius(12.dp.toPx()))
     if (frame == null) return@Canvas
     for ((index, brick) in frame.bricks.withIndex()) drawRoundRect(
-      if (index % 2 == 0) Color(0xffc4b4ff) else Color(0xffffca7a),
+      if (index % 2 == 0) Folderstorm.Lavender else Folderstorm.Gold,
       Offset(brick.x * size.width, brick.y * size.height), Size(brick.width * size.width, brick.height * size.height), CornerRadius(3.dp.toPx()))
-    drawRoundRect(Color(0xff80ddd1), Offset((frame.paddle - frame.paddleWidth / 2) * size.width, .92f * size.height),
+    drawRoundRect(Folderstorm.PaleLavender, Offset((frame.paddle - frame.paddleWidth / 2) * size.width, .92f * size.height),
       Size(frame.paddleWidth * size.width, 8.dp.toPx()), CornerRadius(4.dp.toPx()))
-    drawCircle(Color.White, 6.dp.toPx(), Offset(frame.ballX * size.width, frame.ballY * size.height))
+    drawCircle(Folderstorm.Text, 6.dp.toPx(), Offset(frame.ballX * size.width, frame.ballY * size.height))
   }
 }
