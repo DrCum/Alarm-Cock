@@ -32,6 +32,14 @@ Check records, challenge progress, and exact native timers persist across app re
 
 Use **Test wake-up check now** to open a check immediately while retaining the configured response deadline. No or timeout starts a test ring; dismissing or snoozing that test ends it without creating another check. The existing **Test sound & tasks now** does not create delayed checks.
 
+## Moving dismiss and Breakout (0.4.0)
+
+**Moving dismiss button** is an optional per-alarm setting. A compact button with a minimum 48 dp touch target moves among nine positions in a bounded panel every five seconds. Tapping it starts the existing dismiss tasks; it never skips them. Existing alarms keep the original button unless enabled.
+
+Add **Breakout** to dismiss, snooze, or wake-up confirmation tasks. Set difficulty, active play per round (5–3600 seconds), and idle reset (5–120 seconds, default 20). Difficulty changes paddle width and ball speed. Play time, rather than score, completes each round; balls are unlimited. The native engine credits foreground frames only while paddle movement occurred within the last 2.5 seconds. Holding a stationary finger does not sustain time. Twenty seconds without movement resets the current round by default; leaving the foreground pauses credit and counts toward the idle gap. Progress checkpoints save approximately once per second. App recreation retains recent checkpoints; a long idle gap resets time. Scores and personal bests are kept locally and never unlock an alarm.
+
+Breakout is bundled native content and works offline; a downloadable JavaScript host remains future work. Normal answer submissions cannot complete a game task. The native engine checks challenge IDs, active time, rounds, and subsequent tasks before finishing an alarm.
+
 ## Flashlight alarms (0.3.0)
 
 Each alarm has **Off**, **Steady**, and **Flashing** flashlight options. Existing alarms default to Off. Steady keeps the rear torch lit; Flashing uses a half-second on/off pulse, once per second. The ringing service controls the light independently of audio and the task screen, so mute while solving leaves it active. Dismissal or snooze stops the light; wake-up-check repeat alarms and later snoozed rings use the same setting. A pending wake-up notification does not illuminate the torch.
@@ -82,9 +90,9 @@ There is no backend, downloadable catalog, JavaScript game host, OTA task distri
 
 ## Workspace verification
 
-On 2026-10-16, `:app:assembleDebug`, `:app:testDebugUnitTest`, and `:app:lintDebug` passed. All 46 tests passed, including Robolectric wake-up lifecycle, torch timing/failure, and ringing-service integration tests on API 28. Lint reported zero errors and 17 warnings, including diagnostics for the alarm-lifetime flashlight wake lock; the service releases that lock when paused or stopped. APK signature verification and ZIP integrity checks passed. The standalone universal debug APK is approximately 36 MiB and includes ARM64, ARMv7, x86, and x86_64 native libraries.
+On 2026-10-16, `:app:assembleDebug`, `:app:testDebugUnitTest`, and `:app:lintDebug` passed. All 57 tests passed, including active-time/AFK accounting, game round/wake-check integration, wake-up lifecycle, and flashlight tests on API 28. Lint reported zero errors and 19 warnings, including diagnostics for the alarm-lifetime flashlight wake lock; the service releases that lock when paused or stopped. APK signature verification and ZIP integrity checks passed. The standalone universal debug APK is approximately 36 MiB and includes ARM64, ARMv7, x86, and x86_64 native libraries.
 
-The user reported that basic ringing and task dismissal worked in 0.1.0. The volume controls, wake-up checks, advance reminders, and 0.3.0 flashlight modes still require physical-device verification, especially Doze, notification actions, and reboot recovery. The 0.3.0 signing certificate matches 0.2.1, 0.2.0, and 0.1.0 for installation over the existing app.
+The user reported that basic ringing and task dismissal worked in 0.1.0. The volume controls, wake-up checks, advance reminders, flashlight modes, and 0.4.0 game/button controls still require physical-device verification, especially Doze, notification actions, and reboot recovery. The 0.4.0 signing certificate matches 0.3.0 and earlier builds for installation over the existing app.
 
 ## Browser download
 

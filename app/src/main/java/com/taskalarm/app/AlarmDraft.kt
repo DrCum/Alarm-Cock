@@ -10,18 +10,23 @@ data class TaskDraft(
   val difficulty: String = "easy",
   val rounds: Int = 1,
   val barcodeMode: String = "any",
-  val barcode: String = ""
+  val barcode: String = "",
+  val gameSeconds: Int = 60,
+  val gameIdleSeconds: Int = 20
 ) {
   fun json() = JSONObject().put("id", id).put("kind", kind).put("difficulty", difficulty).put("rounds", rounds)
     .put("barcodeMode", barcodeMode).put("barcode", barcode)
-  val name get() = when (kind) { "text" -> "Type random text"; "math" -> "Solve math"; else -> "Scan a barcode" }
+    .put("gameSeconds", gameSeconds).put("gameIdleSeconds", gameIdleSeconds)
+  val name get() = when (kind) { "text" -> "Type random text"; "math" -> "Solve math"; "breakout" -> "Play Breakout"; else -> "Scan a barcode" }
   val example get() = when (kind) {
     "text" -> when (difficulty) { "easy" -> "kefuma"; "medium" -> "K7mP3xRa9q"; else -> "R8!mQ2#vL9@pX4&s" }
+    "breakout" -> "$gameSeconds seconds of active play · idle $gameIdleSeconds seconds resets time"
     else -> when (difficulty) { "easy" -> "7 + 5 = ?"; "medium" -> "12 × 7 + 18 = ?"; else -> "(23 × 14) − (12 × 7) = ?" }
   }
   companion object {
     fun from(value: JSONObject) = TaskDraft(value.getString("id"), value.getString("kind"), value.getString("difficulty"),
-      value.getInt("rounds"), value.getString("barcodeMode"), value.getString("barcode"))
+      value.getInt("rounds"), value.getString("barcodeMode"), value.getString("barcode"),
+      value.optInt("gameSeconds", 60), value.optInt("gameIdleSeconds", 20))
   }
 }
 
@@ -48,7 +53,8 @@ data class AlarmDraft(
   val wakeTasks: List<TaskDraft> = listOf(TaskDraft()),
   val wakeReuseDismissTasks: Boolean = true,
   val wakeRetryTasks: List<TaskDraft> = listOf(TaskDraft()),
-  val flashlightMode: String = "off"
+  val flashlightMode: String = "off",
+  val randomDismiss: Boolean = false
 ) {
   fun json() = JSONObject().put("id", id).put("label", label).put("hour", hour).put("minute", minute)
     .put("days", JSONArray(days.sorted())).put("enabled", enabled).put("snoozeMinutes", snoozeMinutes)
@@ -59,6 +65,7 @@ data class AlarmDraft(
     .put("wakeMode", wakeMode).put("wakeTasks", JSONArray(wakeTasks.map { it.json() }))
     .put("wakeReuseDismissTasks", wakeReuseDismissTasks).put("wakeRetryTasks", JSONArray(wakeRetryTasks.map { it.json() }))
     .put("flashlightMode", flashlightMode)
+    .put("randomDismiss", randomDismiss)
 
   fun validate() {
     require(hour.toIntOrNull() in 0..23 && minute.toIntOrNull() in 0..59) { "Enter a valid 24-hour time." }
@@ -71,6 +78,10 @@ data class AlarmDraft(
     }
     val configured = dismissTasks + snoozeTasks + if (wakeEnabled) (if (wakeMode == "tasks") wakeTasks else emptyList()) + (if (!wakeReuseDismissTasks) wakeRetryTasks else emptyList()) else emptyList()
     for (task in configured) {
+      if (task.kind == "breakout") {
+        require(task.gameSeconds in 5..3600) { "Choose 5–3600 seconds of active play." }
+        require(task.gameIdleSeconds in 5..120) { "Choose a 5–120 second idle reset." }
+      }
       require(task.kind != "barcode" || task.barcodeMode != "specific" || task.barcode.isNotEmpty()) { "Scan the target barcode for each specific-barcode task." }
     }
   }
@@ -93,7 +104,7 @@ data class AlarmDraft(
         value.optBoolean("protectVolume"), value.optBoolean("allowMuteWhileSolving"), value.optBoolean("wakeEnabled"),
         value.optInt("wakeDelayMinutes", 5), value.optInt("wakeResponseMinutes", 5), value.optString("wakeMode", "yes_no"),
         tasks("wakeTasks", listOf(TaskDraft())), value.optBoolean("wakeReuseDismissTasks", true), tasks("wakeRetryTasks", listOf(TaskDraft())),
-        value.optString("flashlightMode", "off"))
+        value.optString("flashlightMode", "off"), value.optBoolean("randomDismiss"))
     }
   }
 }

@@ -152,6 +152,16 @@ internal class WakeChecks(
       SessionTasks.Result.COMPLETE -> { remove(record); true }
     }
   }
+  fun gameRecord(id: String) = waiting(id).also {
+    check(it.getJSONObject("alarm").optString("wakeMode", "yes_no") == "tasks")
+  }
+  fun saveGame(record: JSONObject) = put(record)
+  fun completeGame(record: JSONObject, challengeId: String) {
+    when (SessionTasks.completeGame(record, record.getJSONObject("alarm").getJSONArray("wakeTasks"), challengeId)) {
+      SessionTasks.Result.COMPLETE -> remove(record)
+      else -> put(record)
+    }
+  }
   fun deadline(id: String) {
     val record = store.checks().find { it.getString("sessionId") == id } ?: return
     if (record.getString("stage") == "retrying" || now() >= record.getLong("deadlineAt")) retry(record)

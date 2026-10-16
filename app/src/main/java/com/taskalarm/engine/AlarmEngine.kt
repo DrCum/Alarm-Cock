@@ -8,6 +8,7 @@ import android.Manifest
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import androidx.core.app.NotificationManagerCompat
 import org.json.JSONArray
 import org.json.JSONObject
@@ -48,6 +49,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
       .put("label", it.getJSONObject("alarm").getString("label")).put("dueAt", it.getLong("dueAt"))
       .put("deadlineAt", it.getLong("deadlineAt")).put("stage", it.getString("stage")).put("test", it.optBoolean("test")) }
     JSONObject().put("alarms", JSONArray(store.alarms())).put("active", active ?: JSONObject.NULL)
+      .put("gameStats", GameScores(context).state())
       .put("wakeCheck", wakeChecks.visible() ?: JSONObject.NULL).put("wakeChecks", JSONArray(pending))
       .put("readiness", readiness()).toString()
   }
@@ -70,7 +72,11 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
       require(tasks.length() <= 10) { "Choose at most 10 tasks per action" }
       for (i in 0 until tasks.length()) {
         val task = tasks.getJSONObject(i)
-        require(task.getString("kind") in listOf("text", "math", "barcode")) { "Unknown task" }
+        require(task.getString("kind") in listOf("text", "math", "barcode", "breakout")) { "Unknown task" }
+        if (task.getString("kind") == "breakout") {
+          require(task.optInt("gameSeconds", 60) in 5..3600) { "Choose 5–3600 seconds of active play" }
+          require(task.optInt("gameIdleSeconds", 20) in 5..120) { "Choose a 5–120 second idle reset" }
+        }
         require(task.getString("difficulty") in listOf("easy", "medium", "hard"))
         require(task.getInt("rounds") in 1..10)
         if (task.getString("kind") == "barcode") {
@@ -210,6 +216,46 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     }
   }
 
+  fun gameFrame(sessionId: String, challengeId: String, check: Boolean, input: Float? = null): BreakoutFrame = synchronized(LOCK) {
+    val sessions = if (check) null else store.sessions()
+    val record = if (check) wakeChecks.gameRecord(sessionId) else current(sessions!!, sessionId)
+    kotlin.check(record.getString("challengeId") == challengeId && record.optString("kind") == "breakout") { "This game has already advanced" }
+    val taskList = if (check) record.getJSONObject("alarm").getJSONArray("wakeTasks") else tasks(record)
+    val task = taskList.getJSONObject(record.getInt("taskIndex"))
+    val scores = GameScores(context)
+    val game = games.getOrPut(challengeId) {
+      if (games.size >= 16) games.remove(games.keys.first())
+      BreakoutGame(task, record, SystemClock::elapsedRealtime, now)
+    }
+    val frame = game.frame(input, scores.best())
+    if (game.needsSave()) {
+      game.checkpoint(record)
+      if (frame.complete) {
+        if (check) wakeChecks.completeGame(record, challengeId)
+        else when (SessionTasks.completeGame(record, taskList, challengeId)) {
+          SessionTasks.Result.COMPLETE -> finish(sessions!!)
+          else -> store.sessions(sessions!!)
+        }
+        scores.record(frame.score, completed = true)
+        games.remove(challengeId)
+      } else {
+        if (check) wakeChecks.saveGame(record) else store.sessions(sessions!!)
+        scores.record(frame.score)
+      }
+    }
+    frame
+  }
+  fun pauseGame(sessionId: String, challengeId: String, check: Boolean) = synchronized(LOCK) {
+    val game = games[challengeId] ?: return@synchronized
+    game.pause()
+    val sessions = if (check) null else store.sessions()
+    val record = runCatching { if (check) wakeChecks.gameRecord(sessionId) else current(sessions!!, sessionId) }.getOrNull()
+      ?: return@synchronized
+    if (record.optString("challengeId") != challengeId) return@synchronized
+    game.checkpoint(record)
+    if (check) wakeChecks.saveGame(record) else store.sessions(sessions!!)
+  }
+
   private fun finish(sessions: MutableList<JSONObject>) {
     val session = sessions.first()
     val base = JSONObject((session.optJSONObject("baseAlarm") ?: session.getJSONObject("alarm")).toString())
@@ -234,5 +280,5 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     wakeChecks.restore()
   }
   fun ring() { context.startForegroundService(Intent(context, RingingService::class.java)) }
-  companion object { val LOCK = Any() }
+  companion object { val LOCK = Any(); private val games = linkedMapOf<String, BreakoutGame>() }
 }

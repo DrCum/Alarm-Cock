@@ -55,3 +55,11 @@ No physical-device checks have been executed in the cloud environment. Record de
 - Open, cancel, and complete barcode scans during a flashlight alarm. The torch must pause for scanning and resume afterward. Leave the scanner in the background and return, checking that camera ownership changes do not strand the light or scanner.
 - Let a wake-up check fail and then snooze its repeat alarm. Each ringing occurrence must use its configured light; silent check notifications must not turn it on.
 - Use another camera app while ringing, then close it. Confirm sound/tasks continue and the light recovers when Android allows it. Test ordinary process death and service recreation; force stop must leave the torch off.
+
+## Moving dismiss and Breakout
+
+- Enable Moving dismiss button and verify the compact target stays within the visible panel, moves every five seconds, and starts dismiss tasks without skipping them. Test large fonts, landscape, TalkBack, and a snooze-to-dismiss action switch.
+- Add Breakout at each difficulty. Change active seconds and idle reset, save, and reopen. Combine it with math, text, barcode, and multiple rounds for dismiss, snooze, and wake-up confirmation.
+- Keep moving the paddle until the timer completes even with a low score. Miss balls repeatedly; there must be no score/lives gate. Hold a stationary finger, stop touching, and background the app: time must stop increasing. At 20 seconds idle, the current round resets.
+- Return within the idle limit and after it. Kill/recreate the process mid-game and check checkpoint restoration and expired progress. Confirm a wake-up-check deadline still re-rings while playing.
+- Mute/unmute sound and enable each flashlight mode while playing. Completing the last game must dismiss or snooze only after every configured round and following task.

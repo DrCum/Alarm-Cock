@@ -229,7 +229,9 @@ private fun HomeContent(state: JSONObject?, busy: Boolean, onAdd: () -> Unit, on
         }
       }
     }
-    Body("Text, math, and barcode tasks work offline. Games and sound packs are planned.")
+    val gameStats = state?.optJSONObject("gameStats")
+    if (gameStats != null && gameStats.optInt("breakoutBest") > 0) Body("Breakout best · ${gameStats.getInt("breakoutBest")} points · ${gameStats.getInt("breakoutCompleted")} tasks completed")
+    Body("Text, math, barcodes, and Breakout work offline.")
     Spacer(Modifier.height(20.dp))
   }
 }
@@ -292,6 +294,8 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
     }
     Text("Volume & solving", style = MaterialTheme.typography.titleLarge)
     CardBlock {
+      ToggleRow("Moving dismiss button", alarm.randomDismiss) { onChange(alarm.copy(randomDismiss = it)) }
+      Body("Use a smaller Dismiss button that changes position every five seconds. Tapping it starts your configured dismiss tasks.")
       ToggleRow("Protect alarm volume", alarm.protectVolume) { onChange(alarm.copy(protectVolume = it)) }
       Body("Keep the volume level present when ringing starts. If already silent, use 50%. Android system controls can still override this. The previous level is restored when ringing ends.")
       ToggleRow("Allow mute while solving", alarm.allowMuteWhileSolving) { onChange(alarm.copy(allowMuteWhileSolving = it)) }
@@ -364,7 +368,7 @@ private fun TaskListEditor(alarm: AlarmDraft, action: String, onChange: (AlarmDr
       onRemove = { onChange(alarm.withTasks(action, alarm.tasks(action).filterNot { it.id == task.id })) }, onEnroll = { onEnroll(action, task.id) })
   }
   if (alarm.tasks(action).size < 10) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-    listOf("text", "math", "barcode").forEach { kind -> OutlinedButton(onClick = { onChange(alarm.withTasks(action, alarm.tasks(action) + TaskDraft(kind = kind))) }) { Text("+ ${kind.replaceFirstChar(Char::uppercase)}") } }
+    listOf("text", "math", "barcode", "breakout").forEach { kind -> OutlinedButton(onClick = { onChange(alarm.withTasks(action, alarm.tasks(action) + TaskDraft(kind = kind))) }) { Text("+ ${kind.replaceFirstChar(Char::uppercase)}") } }
   }
 }
 
@@ -377,7 +381,17 @@ private fun TaskCard(index: Int, task: TaskDraft, onChange: (TaskDraft) -> Unit,
       FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("easy", "medium", "hard").forEach { level ->
         FilterChip(task.difficulty == level, { onChange(task.copy(difficulty = level)) }, label = { Text(level.replaceFirstChar(Char::uppercase)) })
       } }
-      Column(Modifier.fillMaxWidth().background(Night, MaterialTheme.shapes.medium).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      if (task.kind == "breakout") {
+        BreakoutPreview(task)
+        Body("Difficulty changes ball speed and paddle size. Points are optional; only active play time completes this task.")
+        OutlinedTextField(if (task.gameSeconds == 0) "" else task.gameSeconds.toString(), { onChange(task.copy(gameSeconds = it.filter(Char::isDigit).take(4).toIntOrNull() ?: 0)) },
+          label = { Text("Active play per round (seconds)") }, supportingText = { Text("5–3600 seconds") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(30, 60, 120, 300).forEach { seconds ->
+          FilterChip(task.gameSeconds == seconds, { onChange(task.copy(gameSeconds = seconds)) }, label = { Text("${seconds}s") })
+        } }
+        OutlinedTextField(if (task.gameIdleSeconds == 0) "" else task.gameIdleSeconds.toString(), { onChange(task.copy(gameIdleSeconds = it.filter(Char::isDigit).take(3).toIntOrNull() ?: 0)) },
+          label = { Text("Reset after idle (seconds)") }, supportingText = { Text("5–120 seconds; default 20") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+      } else Column(Modifier.fillMaxWidth().background(Night, MaterialTheme.shapes.medium).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Eyebrow("EXAMPLE · ${task.difficulty.uppercase()}")
         Text(task.example, color = Lavender, fontFamily = FontFamily.Monospace, fontSize = 21.sp)
         Body(if (task.kind == "text") "Case sensitive. A fresh string each round." else "New numbers each round. Enter the answer.")
@@ -418,7 +432,8 @@ private fun RingingContent(active: JSONObject, busy: Boolean, onAction: (String)
     }
     if (active.optBoolean("volumeGuardBlocked")) Body("Android prevented the volume guard. Check your phone’s alarm volume.")
     if (active.optBoolean("flashlightBlocked")) Body("Flashlight unavailable. Check camera access or close other camera apps. Your alarm and tasks continue.")
-    Primary(if (action == "dismiss") "Complete tasks to dismiss" else "Dismiss alarm", !busy && action != "dismiss") { onAction("dismiss") }
+    if (alarm.randomDismiss && action != "dismiss") MovingDismissButton(active.getString("sessionId"), !busy) { onAction("dismiss") }
+    else Primary(if (action == "dismiss") "Complete tasks to dismiss" else "Dismiss alarm", !busy && action != "dismiss") { onAction("dismiss") }
     Secondary(if (active.getBoolean("test")) "Test snooze" else "Snooze · ${alarm.snoozeMinutes} minutes", !busy && action != "snooze") { onAction("snooze") }
     if (action != null) Body("Switching actions starts that action’s tasks from the beginning.")
     if (active.getBoolean("test")) Body("To stop a test, finish its tasks or use Android Settings → Apps → Task Alarm → Force stop.")
@@ -426,15 +441,16 @@ private fun RingingContent(active: JSONObject, busy: Boolean, onAction: (String)
 }
 
 @Composable
-private fun ChallengeCard(session: JSONObject, tasks: List<TaskDraft>, prefix: String, busy: Boolean, onSubmit: (String) -> Unit, onScan: () -> Unit) {
+private fun ChallengeCard(session: JSONObject, tasks: List<TaskDraft>, prefix: String, busy: Boolean, onSubmit: (String) -> Unit, onScan: () -> Unit, wake: Boolean = false) {
   val kind = session.optString("kind")
   var answer by remember(session.optString("challengeId")) { mutableStateOf("") }
   CardBlock {
     val task = tasks[session.getInt("taskIndex")]
     Eyebrow("$prefix · TASK ${session.getInt("taskIndex") + 1}/${tasks.size} · ROUND ${session.getInt("round")}/${task.rounds}")
-    Body(when (kind) { "text" -> "Type the text exactly, including capitals and symbols."; "math" -> "Solve the problem to keep going."; else -> "Get up and scan a barcode with your camera." })
+    Body(when (kind) { "text" -> "Type the text exactly, including capitals and symbols."; "math" -> "Solve the problem to keep going."; "breakout" -> "Active play completes the task. Points are just for fun."; else -> "Get up and scan a barcode with your camera." })
     Text(session.getString("prompt"), fontFamily = FontFamily.Monospace, fontSize = 25.sp, color = Lavender)
-    if (kind == "barcode") Primary("Open scanner", !busy, onScan)
+    if (kind == "breakout") BreakoutBoard(session, wake)
+    else if (kind == "barcode") Primary("Open scanner", !busy, onScan)
     else {
       OutlinedTextField(answer, { answer = it }, label = { Text("Your answer") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false,
@@ -456,7 +472,7 @@ private fun WakeCheckContent(check: JSONObject, busy: Boolean, onReply: (Boolean
     Text("${remaining / 60}:${(remaining % 60).toString().padStart(2, '0')} remaining", fontSize = 30.sp, color = Lavender)
     Body("If you don’t finish this check in time, your alarm will ring again.")
     if (alarm.wakeMode == "yes_no") Primary("Yes, I’m up", !busy) { onReply(true) }
-    else ChallengeCard(check, alarm.wakeTasks, "CONFIRM YOU’RE UP", busy, onSubmit, onScan)
+    else ChallengeCard(check, alarm.wakeTasks, "CONFIRM YOU’RE UP", busy, onSubmit, onScan, wake = true)
     Secondary("No — ring again now", !busy) { onReply(false) }
   }
 }
