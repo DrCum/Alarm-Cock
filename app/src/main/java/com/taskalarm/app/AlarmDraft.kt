@@ -17,10 +17,11 @@ data class TaskDraft(
   fun json() = JSONObject().put("id", id).put("kind", kind).put("difficulty", difficulty).put("rounds", rounds)
     .put("barcodeMode", barcodeMode).put("barcode", barcode)
     .put("gameSeconds", gameSeconds).put("gameIdleSeconds", gameIdleSeconds)
-  val name get() = when (kind) { "text" -> "Type random text"; "math" -> "Solve math"; "breakout" -> "Play Breakout"; else -> "Scan a barcode" }
+  val name get() = when (kind) { "text" -> "Type random text"; "math" -> "Solve math"; "breakout" -> "Play Breakout"; "memory" -> "Repeat a memory sequence"; else -> "Scan a barcode" }
   val example get() = when (kind) {
     "text" -> when (difficulty) { "easy" -> "kefuma"; "medium" -> "K7mP3xRa9q"; else -> "R8!mQ2#vL9@pX4&s" }
     "breakout" -> "$gameSeconds seconds of active play · idle $gameIdleSeconds seconds resets time"
+    "memory" -> when (difficulty) { "easy" -> "1 → 3 → 2"; "medium" -> "1 → 3 → 2 → 4 → 1"; else -> "1 → 3 → 2 → 4 → 1 → 2 → 3" }
     else -> when (difficulty) { "easy" -> "7 + 5 = ?"; "medium" -> "12 × 7 + 18 = ?"; else -> "(23 × 14) − (12 × 7) = ?" }
   }
   companion object {
@@ -54,7 +55,10 @@ data class AlarmDraft(
   val wakeReuseDismissTasks: Boolean = true,
   val wakeRetryTasks: List<TaskDraft> = listOf(TaskDraft()),
   val flashlightMode: String = "off",
-  val randomDismiss: Boolean = false
+  val randomDismiss: Boolean = false,
+  val maxSnoozes: Int = 0,
+  val shuffleTasks: Boolean = false,
+  val vibrate: Boolean = false
 ) {
   fun json() = JSONObject().put("id", id).put("label", label).put("hour", hour).put("minute", minute)
     .put("days", JSONArray(days.sorted())).put("enabled", enabled).put("snoozeMinutes", snoozeMinutes)
@@ -66,10 +70,12 @@ data class AlarmDraft(
     .put("wakeReuseDismissTasks", wakeReuseDismissTasks).put("wakeRetryTasks", JSONArray(wakeRetryTasks.map { it.json() }))
     .put("flashlightMode", flashlightMode)
     .put("randomDismiss", randomDismiss)
+    .put("maxSnoozes", maxSnoozes).put("shuffleTasks", shuffleTasks).put("vibrate", vibrate)
 
   fun validate() {
     require(hour.toIntOrNull() in 0..23 && minute.toIntOrNull() in 0..59) { "Enter a valid 24-hour time." }
     require(snoozeMinutes in 1..60) { "Choose a snooze length from 1 to 60 minutes." }
+    require(maxSnoozes in 0..10) { "Choose 0–10 snoozes; 0 means unlimited." }
     require(flashlightMode in listOf("off", "steady", "flashing")) { "Choose a valid flashlight mode." }
     if (wakeEnabled) {
       require(wakeDelayMinutes in 1..1440 && wakeResponseMinutes in 1..1440) { "Wake-up check times must be 1–1440 minutes." }
@@ -104,7 +110,8 @@ data class AlarmDraft(
         value.optBoolean("protectVolume"), value.optBoolean("allowMuteWhileSolving"), value.optBoolean("wakeEnabled"),
         value.optInt("wakeDelayMinutes", 5), value.optInt("wakeResponseMinutes", 5), value.optString("wakeMode", "yes_no"),
         tasks("wakeTasks", listOf(TaskDraft())), value.optBoolean("wakeReuseDismissTasks", true), tasks("wakeRetryTasks", listOf(TaskDraft())),
-        value.optString("flashlightMode", "off"), value.optBoolean("randomDismiss"))
+        value.optString("flashlightMode", "off"), value.optBoolean("randomDismiss"),
+        value.optInt("maxSnoozes", 0), value.optBoolean("shuffleTasks"), value.optBoolean("vibrate"))
     }
   }
 }

@@ -20,6 +20,7 @@ class RingingService : Service() {
   private var restoreVolume: Int? = null
   private var scannerActive = false
   private var flashlightWakeLock: PowerManager.WakeLock? = null
+  private val vibration by lazy { AlarmVibration(this) }
   private val handler = Handler(Looper.getMainLooper())
   private val flashlight by lazy { AlarmFlashlight(handler, CameraTorch(this)::set) { blocked ->
     synchronized(AlarmEngine.LOCK) {
@@ -64,7 +65,7 @@ class RingingService : Service() {
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     val session = synchronized(AlarmEngine.LOCK) { AlarmStore(this).sessions().firstOrNull() }
-    if (session == null) { releaseFlashlight(); stopSelf(); return START_NOT_STICKY }
+    if (session == null) { releaseFlashlight(); vibration.stop(); stopSelf(); return START_NOT_STICKY }
     val alarm = session.getJSONObject("alarm")
     val manager = getSystemService(NotificationManager::class.java)
     manager.createNotificationChannel(NotificationChannel(CHANNEL, "Ringing alarms", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -82,6 +83,7 @@ class RingingService : Service() {
     if (intent?.hasExtra("scannerActive") == true) scannerActive = intent.getBooleanExtra("scannerActive", false)
     if (sessionId != session.getString("sessionId")) {
       releaseFlashlight()
+      vibration.stop()
       releaseAudio(); sessionId = session.getString("sessionId")
       val audio = getSystemService(AudioManager::class.java)
       muted = session.optBoolean("muted")
@@ -108,6 +110,7 @@ class RingingService : Service() {
       flashlightWakeLock?.let { if (it.isHeld) it.release() }; flashlightWakeLock = null
     }
     flashlight.update(flashlightMode, scannerActive)
+    vibration.update(alarm.optBoolean("vibrate"))
     muted = session.optBoolean("muted")
     player?.setVolume(if (muted) 0f else 1f, if (muted) 0f else 1f)
     if (muted) tone?.stopTone()
@@ -145,6 +148,6 @@ class RingingService : Service() {
     flashlightWakeLock?.let { if (it.isHeld) it.release() }; flashlightWakeLock = null
   }
 
-  override fun onDestroy() { releaseFlashlight(); releaseAudio(); super.onDestroy() }
+  override fun onDestroy() { releaseFlashlight(); vibration.stop(); releaseAudio(); super.onDestroy() }
   companion object { const val CHANNEL = "task-alarm-ringing-v1" }
 }

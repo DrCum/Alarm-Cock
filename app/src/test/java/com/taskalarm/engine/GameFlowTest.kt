@@ -73,4 +73,17 @@ class GameFlowTest {
     assertThrows(IllegalArgumentException::class.java) { engine.test(draft.json().toString()) }
     assertTrue(store.sessions().isEmpty())
   }
+  @Test fun playingCannotExtendAWakeCheckDeadline() {
+    var wallTime = System.currentTimeMillis()
+    engine = AlarmEngine(RuntimeEnvironment.getApplication()) { wallTime }
+    engine.testWake(AlarmDraft(wakeEnabled = true, wakeResponseMinutes = 1, wakeMode = "tasks", wakeTasks = listOf(task.copy(gameSeconds = 120))).json().toString())
+    val record = store.checks().single()
+    engine.gameFrame(record.getString("sessionId"), record.getString("challengeId"), true, .2f)
+    ShadowSystemClock.advanceBy(Duration.ofSeconds(61))
+    wallTime += 61_000
+    assertThrows(IllegalStateException::class.java) { engine.gameFrame(record.getString("sessionId"), record.getString("challengeId"), true, .8f) }
+    assertTrue(store.checks().isEmpty())
+    assertEquals(1, store.sessions().size)
+    assertTrue(store.sessions().single().getBoolean("wakeRetry"))
+  }
 }

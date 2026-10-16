@@ -104,6 +104,8 @@ internal class WakeChecks(
     if (record.getString("stage") == "scheduled") {
       record.put("stage", "waiting")
       if (record.getJSONObject("alarm").optString("wakeMode", "yes_no") == "tasks") {
+        val alarm = record.getJSONObject("alarm")
+        if (alarm.optBoolean("shuffleTasks")) alarm.put("wakeTasks", TaskOrder.arrange(alarm.getJSONArray("wakeTasks"), true))
         SessionTasks.start(record, record.getJSONObject("alarm").getJSONArray("wakeTasks"))
       }
       put(record)

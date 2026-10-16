@@ -13,6 +13,8 @@ import androidx.core.app.NotificationManagerCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import java.time.Instant
+import java.time.ZoneId
 
 internal class AlarmEngine(private val context: Context, private val now: () -> Long = System::currentTimeMillis) {
   private val store = AlarmStore(context)
@@ -58,6 +60,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     require(alarm.getString("id").matches(Regex("[A-Za-z0-9-]{1,100}"))) { "Invalid alarm ID" }
     require(alarm.getInt("hour") in 0..23 && alarm.getInt("minute") in 0..59) { "Invalid time" }
     require(alarm.getInt("snoozeMinutes") in 1..60) { "Snooze must be 1–60 minutes" }
+    require(alarm.optInt("maxSnoozes", 0) in 0..10) { "Choose 0–10 snoozes; 0 means unlimited" }
     require(alarm.optString("flashlightMode", "off") in listOf("off", "steady", "flashing")) { "Invalid flashlight mode" }
     require(alarm.getString("label").length <= 120) { "Alarm name is too long" }
     val days = alarm.getJSONArray("days")
@@ -70,10 +73,12 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     for (key in listOf("dismissTasks", "snoozeTasks", "wakeTasks", "wakeRetryTasks")) {
       val tasks = alarm.optJSONArray(key) ?: continue
       require(tasks.length() <= 10) { "Choose at most 10 tasks per action" }
+      val used = key in listOf("dismissTasks", "snoozeTasks") || (alarm.optBoolean("wakeEnabled") &&
+        ((key == "wakeTasks" && alarm.optString("wakeMode", "yes_no") == "tasks") || (key == "wakeRetryTasks" && !alarm.optBoolean("wakeReuseDismissTasks", true))))
       for (i in 0 until tasks.length()) {
         val task = tasks.getJSONObject(i)
-        require(task.getString("kind") in listOf("text", "math", "barcode", "breakout")) { "Unknown task" }
-        if (task.getString("kind") == "breakout") {
+        require(task.getString("kind") in listOf("text", "math", "barcode", "breakout", "memory")) { "Unknown task" }
+        if (task.getString("kind") == "breakout" && used) {
           require(task.optInt("gameSeconds", 60) in 5..3600) { "Choose 5–3600 seconds of active play" }
           require(task.optInt("gameIdleSeconds", 20) in 5..120) { "Choose a 5–120 second idle reset" }
         }
@@ -81,8 +86,6 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
         require(task.getInt("rounds") in 1..10)
         if (task.getString("kind") == "barcode") {
           require(task.getString("barcodeMode") in listOf("any", "specific"))
-          val used = key in listOf("dismissTasks", "snoozeTasks") || (alarm.optBoolean("wakeEnabled") &&
-            ((key == "wakeTasks" && alarm.optString("wakeMode", "yes_no") == "tasks") || (key == "wakeRetryTasks" && !alarm.optBoolean("wakeReuseDismissTasks", true))))
           require(!used || task.getString("barcodeMode") != "specific" || task.getString("barcode").isNotEmpty()) { "Scan the target barcode first" }
         }
       }
@@ -112,7 +115,8 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
 
   private fun next(alarm: JSONObject): Long {
     val days = alarm.getJSONArray("days")
-    return Timing.next(alarm.getInt("hour"), alarm.getInt("minute"), (0 until days.length()).map { days.getInt(it) }.toSet())
+    return Timing.next(alarm.getInt("hour"), alarm.getInt("minute"), (0 until days.length()).map { days.getInt(it) }.toSet(),
+      Instant.ofEpochMilli(now()).atZone(ZoneId.systemDefault()))
   }
   private fun schedule(alarm: JSONObject) {
     val show = PendingIntent.getActivity(context, 0, launchIntent(), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -151,7 +155,9 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
   }
 
   private fun enqueue(base: JSONObject, test: Boolean, wakeRetry: Boolean = false) {
-    val alarm = JSONObject(base.toString())
+    val occurrence = JSONObject(base.toString())
+    if (!base.optBoolean("snoozed") && !wakeRetry) occurrence.put("snoozeCount", 0)
+    val alarm = JSONObject(occurrence.toString())
     if (wakeRetry && !base.optBoolean("wakeReuseDismissTasks", true)) {
       alarm.put("dismissTasks", base.optJSONArray("wakeRetryTasks") ?: JSONArray())
     }
@@ -159,7 +165,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     if (sessions.none { it.getJSONObject("alarm").getString("id") == alarm.getString("id") && it.getBoolean("test") == test }) {
       val audio = context.getSystemService(AudioManager::class.java)
       val volume = audio.getStreamVolume(AudioManager.STREAM_ALARM)
-      sessions.add(JSONObject().put("sessionId", UUID.randomUUID().toString()).put("alarm", alarm).put("baseAlarm", JSONObject(base.toString()))
+      sessions.add(JSONObject().put("sessionId", UUID.randomUUID().toString()).put("alarm", alarm).put("baseAlarm", occurrence)
         .put("wakeRetry", wakeRetry).put("action", JSONObject.NULL).put("taskIndex", 0).put("round", 1).put("prompt", JSONObject.NULL)
         .put("kind", JSONObject.NULL).put("test", test).put("muted", false).put("originalVolume", volume)
         .put("guardVolume", VolumePolicy.guardedLevel(volume, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM))))
@@ -187,6 +193,12 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     require(action in listOf("dismiss", "snooze"))
     val sessions = store.sessions(); val session = current(sessions, sessionId)
     if (session.optString("action") == action) return@synchronized
+    val alarm = session.getJSONObject("alarm")
+    if (action == "snooze") check(alarm.optInt("maxSnoozes", 0) == 0 || alarm.optInt("snoozeCount") < alarm.optInt("maxSnoozes")) { "Snooze limit reached. Complete your dismiss tasks." }
+    if (alarm.optBoolean("shuffleTasks")) {
+      val key = if (action == "snooze") "snoozeTasks" else "dismissTasks"
+      alarm.put(key, TaskOrder.arrange(alarm.getJSONArray(key), true))
+    }
     session.put("action", action).put("muted", false)
     val tasks = tasks(session)
     if (tasks.length() == 0) finish(sessions)
@@ -263,6 +275,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
       if (session.getString("action") == "snooze") {
         check(readiness().getBoolean("exactAlarms")) { "Restore Alarms & reminders access before snoozing" }
         base.put("enabled", true).put("snoozed", true).put("wakeRetry", session.optBoolean("wakeRetry"))
+          .put("snoozeCount", session.getJSONObject("alarm").optInt("snoozeCount") + 1)
           .put("nextAt", now() + base.getInt("snoozeMinutes") * 60_000L)
         schedule(base); store.put(base)
       } else wakeChecks.schedule(base)
@@ -274,7 +287,13 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
   fun restore(action: String?) = synchronized(LOCK) {
     if (!readiness().getBoolean("exactAlarms")) return@synchronized
     for (alarm in store.alarms().filter { it.getBoolean("enabled") }) {
-      if (!alarm.optBoolean("snoozed") || alarm.optLong("nextAt") <= now()) alarm.put("nextAt", next(alarm))
+      val missedSnooze = alarm.optBoolean("snoozed") && alarm.optLong("nextAt") <= now()
+      if (!alarm.optBoolean("snoozed") || missedSnooze) {
+        alarm.put("nextAt", next(alarm))
+        if (missedSnooze) {
+          alarm.remove("snoozed"); alarm.remove("wakeRetry"); alarm.put("snoozeCount", 0)
+        }
+      }
       schedule(alarm); store.put(alarm)
     }
     wakeChecks.restore()

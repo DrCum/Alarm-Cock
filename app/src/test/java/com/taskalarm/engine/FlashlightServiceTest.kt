@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.os.Vibrator
 import com.taskalarm.app.AlarmDraft
 import com.taskalarm.app.TaskDraft
 import org.junit.Assert.*
@@ -33,22 +34,27 @@ class FlashlightServiceTest {
     cameras.addCamera("back", back)
     val engine = AlarmEngine(context)
     val store = AlarmStore(context)
-    engine.test(AlarmDraft(flashlightMode = "steady", allowMuteWhileSolving = true, dismissTasks = listOf(TaskDraft())).json().toString())
+    val vibrator = shadowOf(context.getSystemService(Vibrator::class.java))
+    vibrator.setHasVibrator(true)
+    engine.test(AlarmDraft(flashlightMode = "steady", vibrate = true, allowMuteWhileSolving = true, dismissTasks = listOf(TaskDraft())).json().toString())
     val controller = Robolectric.buildService(RingingService::class.java).create()
     val service = controller.get()
     try {
       service.onStartCommand(null, 0, 1)
       assertTrue(cameras.getTorchMode("back"))
+      assertTrue(vibrator.isVibrating)
       val id = store.sessions().single().getString("sessionId")
       engine.begin(id, "dismiss")
       engine.setMuted(id, true)
       service.onStartCommand(null, 0, 2)
       assertTrue(cameras.getTorchMode("back"))
+      assertTrue(vibrator.isVibrating)
       service.onStartCommand(Intent().putExtra("scannerActive", true), 0, 3)
       assertFalse(cameras.getTorchMode("back"))
       service.onStartCommand(Intent().putExtra("scannerActive", false), 0, 4)
       assertTrue(cameras.getTorchMode("back"))
     } finally { controller.destroy() }
     assertFalse(cameras.getTorchMode("back"))
+    assertFalse(vibrator.isVibrating)
   }
 }

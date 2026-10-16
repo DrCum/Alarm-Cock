@@ -32,6 +32,16 @@ Check records, challenge progress, and exact native timers persist across app re
 
 Use **Test wake-up check now** to open a check immediately while retaining the configured response deadline. No or timeout starts a test ring; dismissing or snoozing that test ends it without creating another check. The existing **Test sound & tasks now** does not create delayed checks.
 
+## Additional wake-up tools (0.5.0)
+
+- **Memory tasks:** watch 3, 5, or 7 numbered tiles flash, then repeat their order. Each round generates a new sequence. A replay control is available; returning to the foreground shows the sequence again. These tasks can dismiss, snooze, or confirm a wake-up check.
+- **Snooze limits:** choose unlimited (default) or 1, 2, 3, 5, or 10 snoozes per alarm occurrence. A snooze counts only after all its tasks finish. The count persists through snoozed rings and wake-up retries; the next regular occurrence starts fresh. At the limit, only dismissal tasks can finish the alarm.
+- **Shuffle task order:** optionally reorder each action’s tasks when that action starts, including wake-up confirmation. Every task and round remains required, and the saved configuration stays unchanged.
+- **Vibration:** optionally repeat a vibration pattern while ringing. Sound mute leaves vibration active; dismissal, snooze, session switches, and service teardown clean up the effect. Android may still apply device/DND rules.
+- **Bundled sounds:** Beacon, Pulse, and Chime are original synthesized PCM16 WAV presets. Selection copies a versioned sound into private storage, so playback works offline and retains the chosen version. The source generator is in `scripts/generate-sounds.py`; imported/system sounds and peak normalization remain available.
+
+Existing alarms keep unlimited snoozes, ordered tasks, and vibration off. The compact moving dismiss target now scales with the phone’s font size while staying inside its panel.
+
 ## Moving dismiss and Breakout (0.4.0)
 
 **Moving dismiss button** is an optional per-alarm setting. A compact button with a minimum 48 dp touch target moves among nine positions in a bounded panel every five seconds. Tapping it starts the existing dismiss tasks; it never skips them. Existing alarms keep the original button unless enabled.
@@ -90,9 +100,9 @@ There is no backend, downloadable catalog, JavaScript game host, OTA task distri
 
 ## Workspace verification
 
-On 2026-10-16, `:app:assembleDebug`, `:app:testDebugUnitTest`, and `:app:lintDebug` passed. All 57 tests passed, including active-time/AFK accounting, game round/wake-check integration, wake-up lifecycle, and flashlight tests on API 28. Lint reported zero errors and 19 warnings, including diagnostics for the alarm-lifetime flashlight wake lock; the service releases that lock when paused or stopped. APK signature verification and ZIP integrity checks passed. The standalone universal debug APK is approximately 36 MiB and includes ARM64, ARMv7, x86, and x86_64 native libraries.
+On 2026-10-16, `:app:assembleDebug`, `:app:testDebugUnitTest`, and `:app:lintDebug` passed. All 68 tests passed, including active-time/AFK accounting, game/wake-check deadlines, memory sequences, snooze limits and recovery, task shuffling, sound assets, and flashlight/vibration service integration on API 28. Lint reported zero errors and 18 warnings, including diagnostics for the alarm-lifetime flashlight wake lock; the service releases that lock when paused or stopped. APK signature verification and ZIP integrity checks passed. The standalone universal debug APK is approximately 36 MiB and includes ARM64, ARMv7, x86, and x86_64 native libraries.
 
-The user reported that basic ringing and task dismissal worked in 0.1.0. The volume controls, wake-up checks, advance reminders, flashlight modes, and 0.4.0 game/button controls still require physical-device verification, especially Doze, notification actions, and reboot recovery. The 0.4.0 signing certificate matches 0.3.0 and earlier builds for installation over the existing app.
+The user reported that basic ringing and task dismissal worked in 0.1.0. The volume controls, wake-up checks, advance reminders, flashlight modes, game/button controls, memory playback, vibration, and bundled sounds still require physical-device verification, especially Doze, notification actions, and reboot recovery. The 0.5.0 signing certificate matches 0.4.0 and earlier builds for installation over the existing app.
 
 ## Browser download
 

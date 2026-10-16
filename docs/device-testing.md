@@ -63,3 +63,11 @@ No physical-device checks have been executed in the cloud environment. Record de
 - Keep moving the paddle until the timer completes even with a low score. Miss balls repeatedly; there must be no score/lives gate. Hold a stationary finger, stop touching, and background the app: time must stop increasing. At 20 seconds idle, the current round resets.
 - Return within the idle limit and after it. Kill/recreate the process mid-game and check checkpoint restoration and expired progress. Confirm a wake-up-check deadline still re-rings while playing.
 - Mute/unmute sound and enable each flashlight mode while playing. Completing the last game must dismiss or snooze only after every configured round and following task.
+
+## Additional wake-up tools
+
+- Add Memory to each action and wake-up confirmation at all difficulties. Watch 3/5/7 flashes, submit a wrong sequence, replay, complete multiple rounds, and background/reopen while flashes are playing. Wrong or stale submissions must not advance.
+- Configure one snooze with several snooze tasks. The counter must stay zero until those tasks finish, then persist through the snoozed ring and a failed wake-up check. The native engine and UI must both reject further snoozes. Verify the next regular occurrence starts at zero.
+- Enable Shuffle task order. Confirm every task/round still appears, progress resumes in the same presented order after app recreation, and saved editor order remains unchanged. Check separate dismiss, snooze, and wake-up lists.
+- Enable vibration, then mute, scan a barcode, switch queued alarms, dismiss, and snooze. Muting only changes sound; final teardown must stop vibration. Check DND and devices without a vibrator.
+- Choose Beacon, Pulse, and Chime, listen on the device, save/reopen, and test screen-off playback. Normalize each preset and verify the original remains available. Upgrade without clearing data and check saved private sound paths.

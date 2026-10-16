@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.taskalarm.engine.SoundProcessor
+import com.taskalarm.engine.BuiltinSounds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -113,6 +114,10 @@ internal fun TaskAlarmApp(activity: MainActivity) {
             onChange = { if (!busy) draftJson = it.json().toString() },
             onBack = { draftJson = null }, onSave = { prepareAndRun(false) }, onTest = { prepareAndRun(true) },
             onTestWake = { prepareAndRun(true, true) },
+            onPreset = { id -> work {
+              val uri = withContext(Dispatchers.IO) { BuiltinSounds.prepare(activity, id) }
+              draftJson = draft.copy(soundUri = uri, soundName = "Task Alarm · ${BuiltinSounds.names[id]}", normalize = false, playbackUri = "").json().toString()
+            } },
             onAccess = { kind -> try { activity.openAccess(kind) } catch (failure: Exception) { error = failure.message } },
             onSound = { custom -> activity.chooseSound(custom, { uri, name ->
               draftJson?.let { saved ->
@@ -230,8 +235,8 @@ private fun HomeContent(state: JSONObject?, busy: Boolean, onAdd: () -> Unit, on
       }
     }
     val gameStats = state?.optJSONObject("gameStats")
-    if (gameStats != null && gameStats.optInt("breakoutBest") > 0) Body("Breakout best · ${gameStats.getInt("breakoutBest")} points · ${gameStats.getInt("breakoutCompleted")} tasks completed")
-    Body("Text, math, barcodes, and Breakout work offline.")
+    if (gameStats != null && (gameStats.optInt("breakoutBest") > 0 || gameStats.optInt("breakoutCompleted") > 0)) Body("Breakout best · ${gameStats.getInt("breakoutBest")} points · ${gameStats.getInt("breakoutCompleted")} tasks completed")
+    Body("Text, math, barcodes, memory, and Breakout work offline.")
     Spacer(Modifier.height(20.dp))
   }
 }
@@ -243,7 +248,7 @@ private fun summary(tasks: List<TaskDraft>) = if (tasks.isEmpty()) "No tasks" el
 @Composable
 private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: Boolean, onChange: (AlarmDraft) -> Unit,
   onBack: () -> Unit, onSave: () -> Unit, onTest: () -> Unit, onTestWake: () -> Unit, onAccess: (String) -> Unit,
-  onSound: (Boolean) -> Unit, onEnroll: (String, String) -> Unit) {
+  onSound: (Boolean) -> Unit, onEnroll: (String, String) -> Unit, onPreset: (String) -> Unit) {
   Page {
     Secondary("← Alarms", !busy, onBack)
     Eyebrow("MAKE THE MORNING YOURS")
@@ -267,6 +272,8 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
         onClick = { onChange(alarm.copy(days = if (index + 1 in alarm.days) alarm.days - (index + 1) else alarm.days + (index + 1))) }, label = { Text(label) }) }
     }
     Body(if (alarm.days.isEmpty()) "Once, at the next occurrence of this time." else "Repeats on selected days.")
+    ToggleRow("Shuffle task order", alarm.shuffleTasks) { onChange(alarm.copy(shuffleTasks = it)) }
+    Body("Choose a new order when dismiss, snooze, or wake-up tasks start. Every configured task and round is still required.")
     listOf("dismiss", "snooze").forEach { action ->
       Text(if (action == "dismiss") "To dismiss" else "To snooze", style = MaterialTheme.typography.titleLarge)
       Body("Complete every selected task and round in order. An empty list allows this action immediately.")
@@ -276,6 +283,11 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(1, 5, 10, 15, 30, 60).forEach { minutes ->
       FilterChip(alarm.snoozeMinutes == minutes, { onChange(alarm.copy(snoozeMinutes = minutes)) }, label = { Text("$minutes min") })
     } }
+    Text("Snooze limit", style = MaterialTheme.typography.titleLarge)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(0, 1, 2, 3, 5, 10).forEach { count ->
+      FilterChip(alarm.maxSnoozes == count, { onChange(alarm.copy(maxSnoozes = count)) }, label = { Text(if (count == 0) "Unlimited" else count.toString()) })
+    } }
+    Body("After the limit, complete dismiss tasks. The count carries through wake-up retries and resets for a new regular alarm occurrence.")
     Text("Flashlight", style = MaterialTheme.typography.titleLarge)
     CardBlock {
       FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -296,6 +308,8 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
     CardBlock {
       ToggleRow("Moving dismiss button", alarm.randomDismiss) { onChange(alarm.copy(randomDismiss = it)) }
       Body("Use a smaller Dismiss button that changes position every five seconds. Tapping it starts your configured dismiss tasks.")
+      ToggleRow("Vibrate while ringing", alarm.vibrate) { onChange(alarm.copy(vibrate = it)) }
+      Body("Repeat an alarm vibration until dismissal or snooze. Muting sound leaves vibration active.")
       ToggleRow("Protect alarm volume", alarm.protectVolume) { onChange(alarm.copy(protectVolume = it)) }
       Body("Keep the volume level present when ringing starts. If already silent, use 50%. Android system controls can still override this. The previous level is restored when ringing ends.")
       ToggleRow("Allow mute while solving", alarm.allowMuteWhileSolving) { onChange(alarm.copy(allowMuteWhileSolving = it)) }
@@ -332,6 +346,10 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
       Text(alarm.soundName, style = MaterialTheme.typography.titleMedium)
       Secondary("Choose phone alarm sound", !busy) { onSound(false) }
       Secondary("Import an audio file", !busy) { onSound(true) }
+      Text("Bundled sounds", style = MaterialTheme.typography.titleSmall)
+      FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { BuiltinSounds.names.forEach { (id, label) ->
+        OutlinedButton(enabled = !busy, onClick = { onPreset(id) }) { Text(label) }
+      } }
       if (alarm.soundUri.isNotEmpty()) {
         TextButton(onClick = { onChange(alarm.copy(soundUri = "", soundName = "Default phone alarm", normalize = false, playbackUri = "")) }) { Text("Use phone default") }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -368,7 +386,7 @@ private fun TaskListEditor(alarm: AlarmDraft, action: String, onChange: (AlarmDr
       onRemove = { onChange(alarm.withTasks(action, alarm.tasks(action).filterNot { it.id == task.id })) }, onEnroll = { onEnroll(action, task.id) })
   }
   if (alarm.tasks(action).size < 10) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-    listOf("text", "math", "barcode", "breakout").forEach { kind -> OutlinedButton(onClick = { onChange(alarm.withTasks(action, alarm.tasks(action) + TaskDraft(kind = kind))) }) { Text("+ ${kind.replaceFirstChar(Char::uppercase)}") } }
+    listOf("text", "math", "barcode", "breakout", "memory").forEach { kind -> OutlinedButton(onClick = { onChange(alarm.withTasks(action, alarm.tasks(action) + TaskDraft(kind = kind))) }) { Text("+ ${kind.replaceFirstChar(Char::uppercase)}") } }
   }
 }
 
@@ -394,7 +412,7 @@ private fun TaskCard(index: Int, task: TaskDraft, onChange: (TaskDraft) -> Unit,
       } else Column(Modifier.fillMaxWidth().background(Night, MaterialTheme.shapes.medium).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Eyebrow("EXAMPLE · ${task.difficulty.uppercase()}")
         Text(task.example, color = Lavender, fontFamily = FontFamily.Monospace, fontSize = 21.sp)
-        Body(if (task.kind == "text") "Case sensitive. A fresh string each round." else "New numbers each round. Enter the answer.")
+        Body(when (task.kind) { "text" -> "Case sensitive. A fresh string each round."; "memory" -> "Watch 3, 5, or 7 numbered tiles flash, then tap them in the same order."; else -> "New numbers each round. Enter the answer." })
       }
     } else {
       FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("any", "specific").forEach { mode ->
@@ -434,7 +452,10 @@ private fun RingingContent(active: JSONObject, busy: Boolean, onAction: (String)
     if (active.optBoolean("flashlightBlocked")) Body("Flashlight unavailable. Check camera access or close other camera apps. Your alarm and tasks continue.")
     if (alarm.randomDismiss && action != "dismiss") MovingDismissButton(active.getString("sessionId"), !busy) { onAction("dismiss") }
     else Primary(if (action == "dismiss") "Complete tasks to dismiss" else "Dismiss alarm", !busy && action != "dismiss") { onAction("dismiss") }
-    Secondary(if (active.getBoolean("test")) "Test snooze" else "Snooze · ${alarm.snoozeMinutes} minutes", !busy && action != "snooze") { onAction("snooze") }
+    val snoozeCount = active.getJSONObject("alarm").optInt("snoozeCount")
+    val maySnooze = alarm.maxSnoozes == 0 || snoozeCount < alarm.maxSnoozes
+    Secondary(if (!maySnooze) "Snooze limit reached" else if (active.getBoolean("test")) "Test snooze" else "Snooze · ${alarm.snoozeMinutes} minutes", !busy && action != "snooze" && maySnooze) { onAction("snooze") }
+    if (alarm.maxSnoozes > 0) Body("Snoozes used: $snoozeCount / ${alarm.maxSnoozes}")
     if (action != null) Body("Switching actions starts that action’s tasks from the beginning.")
     if (active.getBoolean("test")) Body("To stop a test, finish its tasks or use Android Settings → Apps → Task Alarm → Force stop.")
   }
@@ -447,9 +468,10 @@ private fun ChallengeCard(session: JSONObject, tasks: List<TaskDraft>, prefix: S
   CardBlock {
     val task = tasks[session.getInt("taskIndex")]
     Eyebrow("$prefix · TASK ${session.getInt("taskIndex") + 1}/${tasks.size} · ROUND ${session.getInt("round")}/${task.rounds}")
-    Body(when (kind) { "text" -> "Type the text exactly, including capitals and symbols."; "math" -> "Solve the problem to keep going."; "breakout" -> "Active play completes the task. Points are just for fun."; else -> "Get up and scan a barcode with your camera." })
+    Body(when (kind) { "text" -> "Type the text exactly, including capitals and symbols."; "math" -> "Solve the problem to keep going."; "breakout" -> "Active play completes the task. Points are just for fun."; "memory" -> "Watch the flashes, then repeat their order."; else -> "Get up and scan a barcode with your camera." })
     Text(session.getString("prompt"), fontFamily = FontFamily.Monospace, fontSize = 25.sp, color = Lavender)
     if (kind == "breakout") BreakoutBoard(session, wake)
+    else if (kind == "memory") MemoryBoard(session, busy, onSubmit)
     else if (kind == "barcode") Primary("Open scanner", !busy, onScan)
     else {
       OutlinedTextField(answer, { answer = it }, label = { Text("Your answer") }, singleLine = true, modifier = Modifier.fillMaxWidth(),

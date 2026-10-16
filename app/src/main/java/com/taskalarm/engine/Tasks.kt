@@ -10,6 +10,11 @@ internal object Tasks {
 
   fun generate(kind: String, difficulty: String): Challenge {
     require(difficulty in listOf("easy", "medium", "hard"))
+    if (kind == "memory") {
+      val length = when (difficulty) { "easy" -> 3; "medium" -> 5; else -> 7 }
+      val sequence = (0 until length).map { number(1, 4) }.joinToString("")
+      return Challenge("Watch $length tiles, then repeat their order", sequence)
+    }
     if (kind == "text") {
       val alphabet = when (difficulty) {
         "easy" -> "abcdefghjkmnpqrstuvwxyz"

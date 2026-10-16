@@ -26,6 +26,7 @@ internal object SessionTasks {
     } else {
       val generated = Tasks.generate(kind, task.getString("difficulty"))
       session.put("prompt", generated.prompt).put("answer", generated.answer)
+      if (kind == "memory") session.put("memorySequence", JSONArray(generated.answer.map { it.digitToInt() }))
     }
   }
 
