@@ -1,3 +1,93 @@
 # Task Alarm for Android
 
-Native Kotlin and Jetpack Compose alarm clock. Tested 0.3.0 source follows in the next commit.
+A native **Kotlin + Jetpack Compose** alarm clock. Users choose tasks they must complete before dismissing or snoozing an alarm. The app works locally without an account or server.
+
+## First milestone
+
+- Create, edit, enable, disable, and delete alarms. Choose repeat weekdays or ring once.
+- Independent, ordered task lists for **dismiss** and **snooze**. Complete every selected task and round. Empty lists allow the corresponding action immediately; switching actions restarts the newly chosen sequence.
+- Random text and math problems at easy, medium, and hard difficulty. Setup shows examples. Choose 1–10 rounds and up to 10 tasks per action.
+- CameraX scanning with the bundled ML Kit barcode model: accept any product barcode/QR code, or enroll one specific value. Matching preserves leading zeros, case, and whitespace. No first-use model download is required.
+- Android's alarm-sound picker and custom audio import via the system document picker. Imported files are copied into private app storage.
+- Optional offline peak normalization: decode up to five minutes / 64 MB of PCM to a bounded temporary file, then write a WAV with its peak near −0.17 dBFS. Unsupported/oversized files fail before saving. This does not change system alarm volume; the phone's volume buttons control the alarm stream while the app is open.
+- Test an alarm immediately without scheduling its draft. Test snooze ends the test.
+- Native exact `AlarmManager.setAlarmClock` scheduling, looping foreground-service playback, full-screen alarm notifications, persisted task progress, stale-answer rejection, and a queue for overlapping alarms. A test does not consume a real alarm occurrence.
+- Restoration of schedules after boot, package replacement, and clock/time-zone changes. Reopening the app resumes a persisted ringing session.
+
+This is an implementation milestone. There is no attached Android phone or emulator in the cloud environment, so camera, audio, lock-screen behavior, Doze, and reboot behavior require the physical-device checklist before daily use. A successful build does not certify unattended delivery.
+
+## Volume controls and wake-up checks (0.2.1)
+
+In each alarm’s editor, **Protect alarm volume** blocks volume keys while the app is visible and asks the ringing service to restore the initial alarm-stream level if Android changes it. If the stream started silent, the guarded level is 50% (rounded up to the nearest available step). The original level is restored when ringing ends. This is best effort: Android can deny changes, fixed-volume devices have their own rules, and system controls/force stop remain available. See [Android AudioManager limits](https://developer.android.com/reference/android/media/AudioManager#setStreamVolume(int,int,int)).
+
+**Allow mute while solving** shows a mute/unmute button once the user starts dismiss or snooze tasks. It silences playback without completing tasks, changing progress, or scheduling snooze. Leaving the app resumes sound; switching between dismiss and snooze also resumes sound. Both volume options default off, including for alarms created in 0.1.0.
+
+Enable **Check that I’m out of bed** to start a wake-up cycle after dismissal, including after dismissing a failed check’s repeat alarm. Snoozing does not start the delay. The independent **Ask after dismissal** and **Time to respond** settings each default to five minutes and accept 1–1440 minutes.
+
+Two minutes after dismissal, a notification shows **Wake-up check at [time]** using the phone’s time format. **Dismiss check** cancels the upcoming check and its re-ring deadline, including when task confirmation is configured. This option expires when the check starts; stale actions cannot bypass its tasks. Checks scheduled for two minutes or less skip the advance notice. The reminder is restored after reboot and supports checks already pending from 0.2.0.
+
+The check uses a notification and requests a full-screen pop-up when Android allows it. Choose **Yes / No** or a separate ordered list of confirmation tasks. Yes, or completing every confirmation task before the deadline, ends the cycle. No rings immediately. An unanswered or unfinished check re-rings at its deadline. The repeat alarm reuses the original dismiss tasks by default, or uses custom repeat tasks when configured; snooze tasks stay unchanged. A repeat alarm that is dismissed starts a new check cycle until the user confirms they are up.
+
+Check records, challenge progress, and exact native timers persist across app recreation. The advance reminder, due notification, and re-ring deadline are independently scheduled with AlarmManager, so the UI does not need to be open. Boot restoration re-arms the timers after unlock; overdue retries are delivered through an exact event rather than directly starting a media service from the boot receiver. Times are stored as wall-clock deadlines; manually changing the clock may shorten or extend a check. Editing, disabling, or deleting the source alarm cancels its pending checks. A new regular occurrence supersedes older checks for that alarm.
+
+Use **Test wake-up check now** to open a check immediately while retaining the configured response deadline. No or timeout starts a test ring; dismissing or snoozing that test ends it without creating another check. The existing **Test sound & tasks now** does not create delayed checks.
+
+## Flashlight alarms (0.3.0)
+
+Each alarm has **Off**, **Steady**, and **Flashing** flashlight options. Existing alarms default to Off. Steady keeps the rear torch lit; Flashing uses a half-second on/off pulse, once per second. The ringing service controls the light independently of audio and the task screen, so mute while solving leaves it active. Dismissal or snooze stops the light; wake-up-check repeat alarms and later snoozed rings use the same setting. A pending wake-up notification does not illuminate the torch.
+
+Android requires Camera permission for torch control. The editor provides permission and app-settings buttons; enabling or testing a flashlight alarm checks permission and hardware first. If the camera becomes unavailable during an alarm, sound and tasks continue, the task screen shows a warning, and the service retries. Barcode scanning temporarily releases the torch so CameraX can use the camera, then resumes it after scanning closes or the app leaves the scanner. The service releases its torch pulse callbacks and CPU wake lock when it stops. Lock-screen, background, camera contention, and manufacturer-specific behavior still need physical-device verification.
+
+## Build and run
+
+Use Android Studio with Java 17 or newer, Android SDK 37, and an Android 8.0+ device (API 26+). Gradle runs on Java 21 in the retained cloud environment and uses a Java 17 compiler toolchain. The project has no Node, React Native, Expo, or Metro dependency.
+
+```bash
+./gradlew :app:assembleDebug :app:testDebugUnitTest
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+The debug APK is standalone, embeds the native UI, and uses Android's local debug signing key. It needs no development server. Release signing and Play distribution are not configured; a release build is unsigned.
+
+For the retained cloud tools, activate `. /workspace/.onboarding/env.sh` in each shell. Its proxy helper remains outside this repository:
+
+```bash
+CI=1 python3 /workspace/.onboarding/gradle.py :app:assembleDebug :app:testDebugUnitTest --max-workers=2 --console=plain --no-daemon
+```
+
+On the phone, grant Alarms & reminders, alarm notifications, and full-screen alarm access using the setup card. The card also appears in the editor so granting access preserves the draft. Grant Camera for flashlight alarms or when enrolling or completing a barcode task. Set an audible alarm volume and use **Test sound & tasks now** first.
+
+## Project map
+
+| Location | Responsibility |
+| --- | --- |
+| `app/src/main/java/com/taskalarm/app/MainActivity.kt` | Android lifecycle, lock-screen flags, system sound/document pickers, permissions |
+| `app/src/main/java/com/taskalarm/app/TaskAlarmApp.kt` | Compose alarm list, editor, task previews, ringing and snooze/dismiss flows |
+| `app/src/main/java/com/taskalarm/app/AlarmDraft.kt` | Editor models and task examples |
+| `app/src/main/java/com/taskalarm/app/BarcodeCamera.kt` | CameraX lifecycle and bundled ML Kit scanning |
+| `app/src/main/java/com/taskalarm/engine/` | Scheduling, persistence, task checking, sound processing, ringing service |
+| `app/src/test/java/com/taskalarm/engine/` | JVM math/text/barcode matching, DST scheduling, and PCM/WAV tests |
+| `docs/device-testing.md` | Physical-device acceptance checklist |
+| `docs/roadmap.md` | Downloadable tasks, JavaScript games, sound packs, and release work |
+
+## Current behavior and limits
+
+Times follow the phone's local time zone. Nonexistent spring-forward times move forward by the DST gap. Repeated fall-back times ring only at their first occurrence; once that has passed, the next valid day is selected. Missed alarms are scheduled for the next valid day during restoration. A future snooze keeps its stored timestamp across restoration.
+
+Reboot restoration runs after the phone is unlocked; direct-boot alarms are not implemented. An active ringing session is preserved across reboot but does not automatically restart media playback from the boot receiver. Opening the app resumes it. The sticky foreground service is intended to recover ordinary process death; this requires device verification. Android force stop, power-off, revoked permissions, alarm volume zero, and manufacturer power-management rules can prevent delivery.
+
+Task answers are checked by the native engine against the active session and challenge ID. Camera results are validated as values, not cryptographic proofs of scanning. This is not an anti-tampering system. Alarm definitions and in-flight sessions use a private, versioned SharedPreferences JSON store. Backup is disabled to prevent restoring sessions and private sound paths onto another phone. Unused imported sounds are retained until app data is cleared; library management and cleanup are follow-up work.
+
+There is no backend, downloadable catalog, JavaScript game host, OTA task distribution, production signing, or published app yet. The roadmap distinguishes downloadable content from native app updates.
+
+## Workspace verification
+
+On 2026-10-16, `:app:assembleDebug`, `:app:testDebugUnitTest`, and `:app:lintDebug` passed. All 46 tests passed, including Robolectric wake-up lifecycle, torch timing/failure, and ringing-service integration tests on API 28. Lint reported zero errors and 17 warnings, including diagnostics for the alarm-lifetime flashlight wake lock; the service releases that lock when paused or stopped. APK signature verification and ZIP integrity checks passed. The standalone universal debug APK is approximately 36 MiB and includes ARM64, ARMv7, x86, and x86_64 native libraries.
+
+The user reported that basic ringing and task dismissal worked in 0.1.0. The volume controls, wake-up checks, advance reminders, and 0.3.0 flashlight modes still require physical-device verification, especially Doze, notification actions, and reboot recovery. The 0.3.0 signing certificate matches 0.2.1, 0.2.0, and 0.1.0 for installation over the existing app.
+
+## Browser download
+
+The current APK is also available through the private [Task Alarm download page](https://task-alarm-download-58b83158.mhorlacher444.chatgpt.site). Sign in with the owning ChatGPT account if prompted. Download the ZIP, extract it with Android Files, then open the APK. The ZIP preserves the original signed APK unchanged.
+
+The download Site source is retained at `/workspace/sites/task-alarm-download`; its `.openai/hosting.json` contains the existing project ID for future updates.

@@ -1,0 +1,57 @@
+# Physical-device acceptance checklist
+
+No physical-device checks have been executed in the cloud environment. Record device model, Android version, build variant, app version, and results for every run. Include a recent Pixel and a Samsung device, then expand to the oldest supported Android version.
+
+## Alarm delivery
+
+- Schedule a one-time alarm 2–3 minutes ahead. Leave the app, turn the screen off, and confirm audible ringing and the task notification. Repeat with the app removed from recents.
+- Use `adb shell dumpsys deviceidle force-idle` on a test phone to verify Doze delivery, then `adb shell dumpsys deviceidle unforce` afterward.
+- Verify time/weekday recurrence, midnight boundaries, clock changes, and DST behavior. Confirm snooze schedules exactly one next occurrence and returns to weekday recurrence afterward.
+- Set two simultaneous alarms; finish the first and confirm the second starts. Snooze the first and confirm the queue continues.
+- Reboot with a future alarm and a future snooze; unlock before their times and confirm restoration. Separately document current unsupported behavior before first unlock.
+- Kill the process without Android force stop while ringing; confirm service/audio recovery and retained task progress. Reboot while ringing and confirm the stored session resumes when opening the app.
+- Revoke exact-alarm permission, notifications, and full-screen access individually. Verify readiness warnings, enabling failures, and regrant/rescheduling. Confirm no permission denial is presented as a successfully enabled alarm.
+
+## Task completion
+
+- Try easy, medium, and hard text and math, checking the examples in setup against generated task styles. Wrong answers must not advance; text case and symbols must match exactly.
+- Combine multiple task types and rounds in each action. No earlier completion should skip a later task. Switch actions midway and confirm the new sequence starts at task one.
+- Repeat scanning for any barcode; enroll and match a specific barcode. A different barcode must fail. Test camera denial, permanent denial, dark-room scanning, leading zeros, QR payloads with spaces, and scanner cancellation.
+- Send duplicate/stale submissions through an engine integration harness; the challenge ID must reject advancement. Background/reopen midway through a task; the challenge and progress must persist.
+- Test task-free dismiss/snooze, a one-time snooze, recurring snooze, and the special test-mode snooze behavior.
+- Test large font, TalkBack, keyboard visibility, device Back, and use on the lock screen. Finish an alarm and confirm keep-awake/lock-screen flags are cleared.
+
+## Audio
+
+- Pick system alarm sounds and import MP3, AAC/M4A, WAV, and Ogg supported by the device. Rename/move the original imported document and confirm the private copy still plays.
+- Normalize a quiet file, silent file, full-scale file, stereo file, and an unsupported/oversized file. Confirm bounded failure and no orphan temporary files. Verify WAV header duration, sample rate, channels, and output peak with an independent audio tool.
+- Check playback volume and looping, system alarm volume zero/nonzero, DND, headphones/Bluetooth, an incoming call, competing audio focus, and a missing/unreadable sound. Verify the default sound or fallback beep plays when an imported sound cannot.
+- Confirm finishing an alarm releases audio focus, media playback, and wake resources, and removes the foreground notification.
+
+## Update readiness (future)
+
+- Install a compatible signed content update while idle and confirm existing alarms keep ringing with their original tasks.
+- Attempt an update while ringing; activation must wait. Verify rollback after a broken content update, incompatible-host rejection, offline startup, and future task/game version pinning.
+
+## Volume guard, intentional mute, and wake-up checks
+
+- Upgrade from 0.1.0 without clearing app data. Existing alarms must retain their time, tasks, sounds, and enabled state; the new features default off.
+- Enable Protect alarm volume, test a ring, and try volume down/up/mute in the task UI, camera screen, system volume panel, lock screen, and while the app is in the background. Check Android’s DND/fixed-volume limits and the guard warning when the system rejects adjustment. Start with alarm volume zero and verify the documented 50% fallback and restoration afterward.
+- Enable Allow mute while solving. The button appears only during tasks. Mute, submit wrong answers, and advance multiple rounds: progress and alarm state must remain active. Unmute, switch actions, and background the app to verify audible playback resumes. Test both media playback and an unavailable-file fallback beep.
+- Enable wake-up checks with a one-minute delay and one-minute response period. Dismiss a real scheduled alarm, close the app, and confirm the check notification appears, then ignore it and confirm re-ringing at the deadline. Repeat with screen off/Doze and after process death.
+- Try Yes, No, and task confirmation. Yes ends checks; No immediately rings. Partial task completion must not extend the deadline. Test custom confirmation and repeat tasks, including specific barcodes and multiple rounds.
+- Snooze a failed check’s repeat alarm. It must keep its custom repeat tasks, and the saved alarm’s original dismiss configuration must remain unchanged. Dismissing the repeat starts another check cycle.
+- Reboot before the check and while its response window is open, unlock, and verify timer restoration and preserved task progress. Reboot past the deadline and verify an exact recovery event re-rings after unlock.
+- Confirm notification Yes/No actions work without opening the app, task-mode notifications offer no Yes bypass, and dismissing a notification never cancels its deadline. Check notification-channel denial and exact-alarm permission revocation.
+- Edit, disable, or delete an alarm with a pending check; it must cancel that cycle. Check two alarms with overlapping wake-up windows and a new regular occurrence while an old check is pending.
+- Use Test wake-up check now in both modes. A resulting test ring must finish without creating another delayed check or changing the real alarm’s schedule.
+
+## Flashlight alarms
+
+- Upgrade from 0.2.1 without clearing data. Existing alarms must default to Off and keep their other settings. Save and reopen alarms in Steady and Flashing modes.
+- Grant Camera using the editor. Test denial, permanent denial, a device with no flash, and permission revocation after scheduling. Sound and tasks must continue when the torch cannot be used; the task screen must show a warning.
+- Test both modes with text/math tasks, mute/unmute, app backgrounding, a locked screen, and Doze. Flashing should pulse once per second; Steady should remain lit.
+- Dismiss and snooze with and without tasks. Confirm the light shuts off, pulses stop, and the CPU wake lock is released. Check queued alarms using different flashlight modes.
+- Open, cancel, and complete barcode scans during a flashlight alarm. The torch must pause for scanning and resume afterward. Leave the scanner in the background and return, checking that camera ownership changes do not strand the light or scanner.
+- Let a wake-up check fail and then snooze its repeat alarm. Each ringing occurrence must use its configured light; silent check notifications must not turn it on.
+- Use another camera app while ringing, then close it. Confirm sound/tasks continue and the light recovers when Android allows it. Test ordinary process death and service recreation; force stop must leave the torch off.
