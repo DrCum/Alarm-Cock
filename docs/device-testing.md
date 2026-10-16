@@ -71,3 +71,12 @@ No physical-device checks have been executed in the cloud environment. Record de
 - Enable Shuffle task order. Confirm every task/round still appears, progress resumes in the same presented order after app recreation, and saved editor order remains unchanged. Check separate dismiss, snooze, and wake-up lists.
 - Enable vibration, then mute, scan a barcode, switch queued alarms, dismiss, and snooze. Muting only changes sound; final teardown must stop vibration. Check DND and devices without a vibrator.
 - Choose Beacon, Pulse, and Chime, listen on the device, save/reopen, and test screen-off playback. Normalize each preset and verify the original remains available. Upgrade without clearing data and check saved private sound paths.
+
+## Maximum-volume playlist escalation
+
+- Upgrade from 0.5.0 and confirm existing alarms keep escalation off. Enable it on one alarm with a short unanswered delay, leave the screen off, and verify escalation to maximum alarm volume. Pick Dismiss or Snooze tasks before the delay and verify the unanswered trigger is suppressed.
+- Complete two real snoozes. The next ring must immediately use maximum volume and the playlist. Test with snooze limits, wake-up failures/retries, and the next regular occurrence to verify count and latch boundaries.
+- Select bundled, phone, and imported tones; reorder and remove them. Check each 45-second slot, short-clip looping, a long clip’s cutoff, playlist wraparound, and fallback for a missing/unreadable file.
+- Mute/unmute while solving; playback volume should change without restarting the slot or advancing tasks. Leave the app and check sound resumes as configured.
+- Recreate the service/process during a slot, change the wall clock, and reboot/unlock while a session is pending. Verify elapsed-time scheduling within a boot and recovery afterward. Check DND/fixed-volume restrictions and the volume warning.
+- Dismiss/snooze, stop the test, and switch to a queued alarm: restore the previous volume, release the old player, and cancel the rotation/guard/wake lock. A queued non-escalating alarm must not inherit maximum volume as its original setting.

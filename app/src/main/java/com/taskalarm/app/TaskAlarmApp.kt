@@ -28,6 +28,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.text.DateFormat
 import java.util.Date
+import java.util.Collections
 
 private val Night = Color(0xff11131b)
 private val Panel = Color(0xff1c1f2b)
@@ -85,14 +86,15 @@ internal fun TaskAlarmApp(activity: MainActivity) {
         if (!correct) error = if (session.getString("kind") == "barcode") "That barcode doesn’t match your saved barcode." else "That answer didn’t match. Give it another try."
       }
     }
-    fun prepareAndRun(test: Boolean, wake: Boolean = false) {
+    fun prepareAndRun(test: Boolean, wake: Boolean = false, escalation: Boolean = false) {
       val current = draft ?: return
       work {
         current.validate()
         val prepared = withContext(Dispatchers.IO) {
           val sound = if (current.normalize && current.soundUri.isNotBlank()) SoundProcessor.prepare(activity, current.soundUri, true) else ""
           val result = current.copy(playbackUri = sound)
-          if (wake) activity.engine.testWake(result.json().toString())
+          if (escalation) activity.engine.testEscalation(result.json().toString())
+          else if (wake) activity.engine.testWake(result.json().toString())
           else if (test) activity.engine.test(result.json().toString()) else activity.engine.save(result.json().toString())
           result
         }
@@ -114,6 +116,7 @@ internal fun TaskAlarmApp(activity: MainActivity) {
             onChange = { if (!busy) draftJson = it.json().toString() },
             onBack = { draftJson = null }, onSave = { prepareAndRun(false) }, onTest = { prepareAndRun(true) },
             onTestWake = { prepareAndRun(true, true) },
+            onTestEscalation = { prepareAndRun(true, escalation = true) },
             onPreset = { id -> work {
               val uri = withContext(Dispatchers.IO) { BuiltinSounds.prepare(activity, id) }
               draftJson = draft.copy(soundUri = uri, soundName = "Task Alarm · ${BuiltinSounds.names[id]}", normalize = false, playbackUri = "").json().toString()
@@ -123,6 +126,13 @@ internal fun TaskAlarmApp(activity: MainActivity) {
               draftJson?.let { saved ->
                 val current = AlarmDraft.from(JSONObject(saved))
                 if (current.id == draft.id) draftJson = current.copy(soundUri = uri, soundName = name, playbackUri = "").json().toString()
+              }
+            }, { error = it }) },
+            onPlaylistSound = { custom -> activity.chooseSound(custom, { uri, name ->
+              draftJson?.let { saved ->
+                val current = AlarmDraft.from(JSONObject(saved))
+                if (current.id == draft.id && current.escalationTones.size < 12)
+                  draftJson = current.copy(escalationTones = current.escalationTones + AlarmTone(uri, name.take(120))).json().toString()
               }
             }, { error = it }) },
             onEnroll = { action, id -> if (!busy) scanAction = { value ->
@@ -248,7 +258,8 @@ private fun summary(tasks: List<TaskDraft>) = if (tasks.isEmpty()) "No tasks" el
 @Composable
 private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: Boolean, onChange: (AlarmDraft) -> Unit,
   onBack: () -> Unit, onSave: () -> Unit, onTest: () -> Unit, onTestWake: () -> Unit, onAccess: (String) -> Unit,
-  onSound: (Boolean) -> Unit, onEnroll: (String, String) -> Unit, onPreset: (String) -> Unit) {
+  onSound: (Boolean) -> Unit, onEnroll: (String, String) -> Unit, onPreset: (String) -> Unit,
+  onPlaylistSound: (Boolean) -> Unit, onTestEscalation: () -> Unit) {
   Page {
     Secondary("← Alarms", !busy, onBack)
     Eyebrow("MAKE THE MORNING YOURS")
@@ -314,6 +325,41 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
       Body("Keep the volume level present when ringing starts. If already silent, use 50%. Android system controls can still override this. The previous level is restored when ringing ends.")
       ToggleRow("Allow mute while solving", alarm.allowMuteWhileSolving) { onChange(alarm.copy(allowMuteWhileSolving = it)) }
       Body("Show a mute/unmute button during tasks. Muting does not finish a task or stop the alarm. Leaving the app resumes sound.")
+    }
+    Text("Volume escalation", style = MaterialTheme.typography.titleLarge)
+    CardBlock {
+      ToggleRow("Escalate unanswered alarms or after two snoozes", alarm.escalationEnabled) { onChange(alarm.copy(escalationEnabled = it)) }
+      Body("Raise alarm volume to maximum and rotate tones every 45 seconds. The previous volume is restored when ringing stops. Android may restrict volume changes.")
+      if (alarm.escalationEnabled) {
+        OutlinedTextField(if (alarm.escalationAfterMinutes == 0) "" else alarm.escalationAfterMinutes.toString(),
+          { onChange(alarm.copy(escalationAfterMinutes = it.filter(Char::isDigit).take(3).toIntOrNull() ?: 0)) },
+          label = { Text("Unanswered delay (minutes)") }, supportingText = { Text("1–120 minutes") },
+          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+        Body("Unanswered means no Dismiss or Snooze action selected. The next ring after two completed snoozes escalates immediately. Once triggered, escalation carries through this alarm’s snoozes and wake-up retries. Mute while solving still works.")
+        Text("Escalation playlist · 45 seconds each", style = MaterialTheme.typography.titleMedium)
+        alarm.escalationTones.forEachIndexed { index, tone ->
+          Text("${index + 1}. ${tone.name}")
+          FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            TextButton(enabled = !busy && index > 0, onClick = {
+              onChange(alarm.copy(escalationTones = alarm.escalationTones.toMutableList().also { Collections.swap(it, index, index - 1) }))
+            }) { Text("Move up") }
+            TextButton(enabled = !busy && index < alarm.escalationTones.lastIndex, onClick = {
+              onChange(alarm.copy(escalationTones = alarm.escalationTones.toMutableList().also { Collections.swap(it, index, index + 1) }))
+            }) { Text("Move down") }
+            TextButton(enabled = !busy, onClick = { onChange(alarm.copy(escalationTones = alarm.escalationTones.filterIndexed { i, _ -> i != index })) }) { Text("Remove") }
+          }
+        }
+        if (alarm.escalationTones.size < 12) {
+          FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { BuiltinSounds.names.forEach { (id, label) ->
+            OutlinedButton(enabled = !busy, onClick = { onChange(alarm.copy(escalationTones = alarm.escalationTones + AlarmTone("builtin:$id", label))) }) { Text("+ $label") }
+          } }
+          Secondary("Add phone tone", !busy) { onPlaylistSound(false) }
+          Secondary("Add audio file", !busy) { onPlaylistSound(true) }
+        }
+        TextButton(enabled = !busy, onClick = { onChange(alarm.copy(escalationTones = AlarmTone.defaults())) }) { Text("Reset playlist to bundled tones") }
+        Body("Choose 1–12 tones. Short tones repeat until their 45-second slot ends; the playlist then loops.")
+        Secondary("Test escalation now", !busy, onTestEscalation)
+      }
     }
     Text("Wake-up check", style = MaterialTheme.typography.titleLarge)
     CardBlock {
@@ -441,6 +487,8 @@ private fun RingingContent(active: JSONObject, busy: Boolean, onAction: (String)
     Eyebrow(if (active.getBoolean("test")) "TEST ALARM" else "TIME TO WAKE UP")
     Text("${alarm.hour.padStart(2, '0')}:${alarm.minute.padStart(2, '0')}", fontSize = 62.sp)
     Text(alarm.label, style = MaterialTheme.typography.titleLarge)
+    if (active.optBoolean("escalated")) Body("Escalated · maximum alarm volume · ${active.optString("escalationToneName", "45-second playlist")}")
+    if (active.optBoolean("soundFallback")) Body("The selected sound could not play. Using the phone default or fallback beep.")
     if (action == null) Body("Choose an action to begin its tasks.")
     else ChallengeCard(active, alarm.tasks(action), action.uppercase(), busy, onSubmit, onScan)
     if (action != null && alarm.allowMuteWhileSolving) {

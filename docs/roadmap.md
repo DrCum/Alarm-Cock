@@ -43,3 +43,5 @@ Add a sound preview with a stop control, storage management, normalization progr
 0.4.0 delivers an optional moving dismiss target and offline native Breakout with active-time completion, idle reset, local best scores, and task previews. The first game deliberately stays within the native task engine; it does not require a downloaded game host.
 
 0.5.0 adds a memory-sequence task, optional per-occurrence snooze limits, shuffled task order, vibration, and locally bundled sound presets. Further candidates: optional progressive difficulty after snoozing, walking tasks with sensor capability checks, explicit lost-barcode recovery choices, and signed downloadable content once a server and signing keys are configured. All challenge features should remain optional and preserve a reviewable configuration preview.
+
+0.6.0 adds optional maximum-volume escalation for unanswered alarms or two completed snoozes, with an editable 45-second tone playlist, slot recovery, and volume restoration.

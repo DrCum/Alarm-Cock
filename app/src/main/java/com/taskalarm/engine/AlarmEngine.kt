@@ -60,6 +60,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     require(alarm.getString("id").matches(Regex("[A-Za-z0-9-]{1,100}"))) { "Invalid alarm ID" }
     require(alarm.getInt("hour") in 0..23 && alarm.getInt("minute") in 0..59) { "Invalid time" }
     require(alarm.getInt("snoozeMinutes") in 1..60) { "Snooze must be 1–60 minutes" }
+    EscalationPolicy.validate(alarm)
     require(alarm.optInt("maxSnoozes", 0) in 0..10) { "Choose 0–10 snoozes; 0 means unlimited" }
     require(alarm.optString("flashlightMode", "off") in listOf("off", "steady", "flashing")) { "Invalid flashlight mode" }
     require(alarm.getString("label").length <= 120) { "Alarm name is too long" }
@@ -142,6 +143,12 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     checkFlashlightAccess(alarm, readiness())
     enqueue(alarm, true); ring()
   }
+  fun testEscalation(json: String) = synchronized(LOCK) {
+    check(store.sessions().isEmpty()) { "An alarm is already ringing" }
+    val alarm = JSONObject(json); validate(alarm); checkFlashlightAccess(alarm, readiness())
+    check(alarm.optBoolean("escalationEnabled")) { "Enable escalation first" }
+    enqueue(alarm, true, forceEscalation = true); ring()
+  }
   private fun checkFlashlightAccess(alarm: JSONObject, access: JSONObject) {
     if (alarm.optString("flashlightMode", "off") == "off") return
     check(access.getBoolean("flashlightAvailable")) { "This phone has no flashlight. Choose Off to enable this alarm." }
@@ -154,9 +161,12 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     wakeChecks.schedule(alarm, true)
   }
 
-  private fun enqueue(base: JSONObject, test: Boolean, wakeRetry: Boolean = false) {
+  private fun enqueue(base: JSONObject, test: Boolean, wakeRetry: Boolean = false, forceEscalation: Boolean = false) {
     val occurrence = JSONObject(base.toString())
-    if (!base.optBoolean("snoozed") && !wakeRetry) occurrence.put("snoozeCount", 0)
+    if (!base.optBoolean("snoozed") && !wakeRetry) {
+      occurrence.put("snoozeCount", 0); occurrence.remove("escalationLatched")
+    }
+    if (forceEscalation) occurrence.put("escalationLatched", true)
     val alarm = JSONObject(occurrence.toString())
     if (wakeRetry && !base.optBoolean("wakeReuseDismissTasks", true)) {
       alarm.put("dismissTasks", base.optJSONArray("wakeRetryTasks") ?: JSONArray())
@@ -194,6 +204,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     val sessions = store.sessions(); val session = current(sessions, sessionId)
     if (session.optString("action") == action) return@synchronized
     val alarm = session.getJSONObject("alarm")
+    EscalationPolicy.refresh(session, AlarmClockStamp.current(context, now()))
     if (action == "snooze") check(alarm.optInt("maxSnoozes", 0) == 0 || alarm.optInt("snoozeCount") < alarm.optInt("maxSnoozes")) { "Snooze limit reached. Complete your dismiss tasks." }
     if (alarm.optBoolean("shuffleTasks")) {
       val key = if (action == "snooze") "snoozeTasks" else "dismissTasks"
@@ -291,7 +302,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
       if (!alarm.optBoolean("snoozed") || missedSnooze) {
         alarm.put("nextAt", next(alarm))
         if (missedSnooze) {
-          alarm.remove("snoozed"); alarm.remove("wakeRetry"); alarm.put("snoozeCount", 0)
+          alarm.remove("snoozed"); alarm.remove("wakeRetry"); alarm.remove("escalationLatched"); alarm.put("snoozeCount", 0)
         }
       }
       schedule(alarm); store.put(alarm)
