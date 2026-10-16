@@ -67,19 +67,9 @@ internal fun HealthScreen(state: JSONObject?, onBack: () -> Unit, onAccess: (Str
 @Composable
 internal fun ScheduleSettings(alarm: AlarmDraft, onChange: (AlarmDraft) -> Unit) {
   val activity = LocalActivity.current ?: return
-  FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-    TextButton(onClick={onChange(alarm.copy(days=setOf(1,2,3,4,5)))}) { Text("Weekdays") }
-    TextButton(onClick={onChange(alarm.copy(days=setOf(6,7)))}) { Text("Weekends") }
-    TextButton(onClick={onChange(alarm.copy(days=emptySet()))}) { Text("One time") }
-  }
-  CardBlock {
-    Text("Schedule exceptions",style=MaterialTheme.typography.titleMedium)
-    if(alarm.skipAt > 0 && (alarm.skipDate.isEmpty() || alarm.skipDate >= java.time.LocalDate.now().toString())) Body("Skipped occurrence: ${if(alarm.skipDate.isNotEmpty()) alarm.skipDate else DateFormat.getDateTimeInstance().format(Date(alarm.skipAt))}. Undo from the alarm list.")
-    if(alarm.pauseUntil > System.currentTimeMillis()) {
-      Body("Paused until ${DateFormat.getDateTimeInstance().format(Date(alarm.pauseUntil))}")
-      Secondary("Clear pause") { onChange(alarm.copy(pauseUntil=0)) }
-    }
-    Secondary("Pause until…") {
+  Column(verticalArrangement=Arrangement.spacedBy(4.dp)) {
+    Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+    OutlinedButton(onClick = {
       val selected = Calendar.getInstance().apply { timeInMillis = maxOf(System.currentTimeMillis()+60_000,alarm.pauseUntil) }
       DatePickerDialog(activity,{_,year,month,day ->
         selected.set(year,month,day)
@@ -88,19 +78,22 @@ internal fun ScheduleSettings(alarm: AlarmDraft, onChange: (AlarmDraft) -> Unit)
           onChange(alarm.copy(pauseUntil=selected.timeInMillis.coerceAtLeast(System.currentTimeMillis())))
         },selected.get(Calendar.HOUR_OF_DAY),selected.get(Calendar.MINUTE),true).show()
       },selected.get(Calendar.YEAR),selected.get(Calendar.MONTH),selected.get(Calendar.DAY_OF_MONTH)).show()
+    }) {Text("Pause until…")}
+    InfoButton("Pause until","Pause affects future regular alarms. An already active snooze or wake-up check continues. The next alarm preview appears in Time / days / name. ${if(alarm.skipAt>0) "Skipped occurrence: ${alarm.skipDate}. Undo it from the alarm list." else "Use Skip next on the alarm list to skip one occurrence."}")
     }
-    val preview = runCatching { (activity as MainActivity).engine.preview(alarm.json().toString()) }.getOrNull()
-    Body(if(!alarm.enabled) "Alarm is disabled." else if(preview != null) "Next after saving: ${DateFormat.getDateTimeInstance().format(Date(preview))}" else "Enter a valid time to preview the next ring.")
-    Body("Pauses and skips affect future regular alarms. An already active snooze or wake-up check continues.")
+    if(alarm.pauseUntil>System.currentTimeMillis()) {
+      Text("Paused until ${DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT).format(Date(alarm.pauseUntil))}",style=MaterialTheme.typography.bodySmall)
+      TextButton(onClick={onChange(alarm.copy(pauseUntil=0))}) {Text("Clear pause")}
+    }
   }
 }
 
 @Composable
 internal fun DifficultySettings(alarm: AlarmDraft, onChange: (AlarmDraft) -> Unit) {
-  CardBlock {
+  Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
     ToggleRow("Increase difficulty after snoozes",alarm.progressiveDifficulty) { onChange(alarm.copy(progressiveDifficulty=it)) }
-    Body("Each completed snooze raises text, math, memory, Breakout, and maze difficulty one level, capped at Hard. Task durations, steps, and light settings stay as configured.")
-    if(alarm.progressiveDifficulty) {
+    InfoButton("Progressive difficulty","Each completed snooze raises text, math, memory, Breakout, and maze difficulty one level, capped at Hard. Task durations, steps, and light settings stay as configured.")
+    if(alarm.progressiveDifficulty) EditorSection("Difficulty previews") {
       val tasks = alarm.dismissTasks+alarm.snoozeTasks+(if(alarm.wakeEnabled) alarm.wakeTasks+alarm.wakeRetryTasks else emptyList())
       tasks.filter { it.kind in listOf("text","math","memory","breakout","maze") }.forEach { task ->
         Text(task.name, style=MaterialTheme.typography.titleSmall)

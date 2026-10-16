@@ -135,3 +135,11 @@ Implementation details and acceptance checks: [wake-up features plan](docs/wake-
 ### Light task fix (0.11.1)
 
 The light threshold accepts any finite lux reading at or above the configured value. Android light sensors report on change, so steady brightness may produce no further events. The hold now uses monotonic foreground time while the latest reading remains above the threshold. The listener stays registered; silence after a valid reading neither resets the timer nor marks the sensor unavailable. Falling below the threshold, leaving the task, or recreating the process resets the hold. An initial on-change value with an older hardware timestamp starts the hold at receipt and cannot backdate completion.
+
+### Compact editor and autosave (0.12.0)
+
+The editor groups controls into collapsible sections. Morning routines stays above Time / days / name; only the latter starts expanded. Pause until is a compact action with Info, and longer explanations open in scrollable Info dialogs.
+
+Valid edits autosave after an 800 ms typing pause. Incomplete or invalid fields leave the last valid alarm in place and show a Not saved status. Done and Android Back flush valid changes before leaving. Exit without saving restores settings from the start of the visit, or removes an alarm created during that visit. Revert restores the visit's opening settings; on a freshly reopened alarm it can restore the previous edit. Recovery history persists locally and stays inside the editor.
+
+Native edit tokens serialize saving and rollback. Closed or superseded editors cannot write, and an alarm that rings/changes independently cannot be rolled back. Edits during a pending snooze retain its exact time/count. Alarm configuration changes keep the established wake-check cancellation behavior; restoring settings does not resurrect an already cancelled check or delivered alarm.

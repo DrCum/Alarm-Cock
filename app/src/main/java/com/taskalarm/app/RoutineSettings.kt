@@ -15,24 +15,19 @@ internal fun RoutineSettings(alarm: AlarmDraft, onChange: (AlarmDraft)->Unit) {
   val activity=LocalActivity.current ?: return
   val store=remember { RoutineStore(activity) }
   var revision by remember { mutableIntStateOf(0) }
-  var expanded by remember { mutableStateOf(false) }
   var name by remember { mutableStateOf("") }
   var editing by remember { mutableStateOf<String?>(null) }
   var selected by remember { mutableStateOf<Routine?>(null) }
   var error by remember { mutableStateOf<String?>(null) }
   val saved=remember(revision) { runCatching { store.saved() }.getOrElse { error=it.message; emptyList() } }
   fun attempt(block: ()->Unit) { try { block(); revision++ } catch(failure: Exception) { error=failure.message } }
-  CardBlock {
-    Text("Morning routines",style=MaterialTheme.typography.titleLarge)
-    Body("Reuse tasks, sound, snooze rules, and wake-up settings. Applying a routine keeps this alarm’s name, time, repeat days, and schedule exceptions.")
-    Secondary(if(expanded) "Hide routine library" else "Browse & save routines") { expanded=!expanded }
-    if(expanded) {
+  EditorSection("Morning routines","${saved.size} saved",info="Reuse tasks, sound, snooze rules, and wake-up settings. Applying a routine keeps this alarm’s name, time, repeat days, and schedule exceptions. Saved routines are independent of alarms that previously used them.") {
       OutlinedTextField(name,{name=it.take(80)},label={Text("Routine name")},modifier=Modifier.fillMaxWidth())
       Primary("Save current settings as new routine",name.isNotBlank()) { attempt { store.save(name,alarm); name=""; editing=null } }
       editing?.let { id ->
         Secondary("Rename selected routine",name.isNotBlank()) { attempt { val existing=store.saved().first { it.id==id }; store.save(name,existing.alarm,id); editing=null; name="" } }
         Secondary("Replace selected routine with current settings",name.isNotBlank()) { attempt { store.save(name,alarm,id); editing=null; name="" } }
-        Body("Editing the saved routine does not change alarms that previously used it.")
+        InfoButton("Saved routines","Editing a routine does not change alarms that previously used it.")
       }
       (RoutineStore.starters()+saved).forEach { routine ->
         HorizontalDivider()
@@ -47,7 +42,6 @@ internal fun RoutineSettings(alarm: AlarmDraft, onChange: (AlarmDraft)->Unit) {
           }
         }
       }
-    }
   }
   selected?.let { routine ->
     AlertDialog(onDismissRequest={selected=null},title={Text("Apply ${routine.name}?")},text={
@@ -64,7 +58,7 @@ internal fun RoutineSettings(alarm: AlarmDraft, onChange: (AlarmDraft)->Unit) {
         if(r.dismissTasks.any { it.kind=="barcode" && it.barcodeMode=="specific" && it.barcode.isEmpty() }) Body("Enroll your own barcode before saving this alarm.")
         if((r.dismissTasks+r.snoozeTasks+r.wakeTasks+r.wakeRetryTasks).any { it.kind in listOf("walk","light","maze") }) Body("Review sensor availability, try the task demo, and choose fallback tasks in the editor.")
       }
-    },confirmButton={TextButton(onClick={attempt { onChange(store.apply(routine,alarm)); selected=null }}) { Text("Apply to draft") }},dismissButton={TextButton(onClick={selected=null}) {Text("Cancel")}})
+    },confirmButton={TextButton(onClick={attempt { onChange(store.apply(routine,alarm)); selected=null }}) { Text("Apply to alarm") }},dismissButton={TextButton(onClick={selected=null}) {Text("Cancel")}})
   }
   error?.let { message -> AlertDialog(onDismissRequest={error=null},title={Text("Routine needs attention")},text={Text(message)},confirmButton={TextButton(onClick={error=null}) {Text("OK")}}) }
 }

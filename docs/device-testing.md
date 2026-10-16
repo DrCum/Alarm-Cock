@@ -100,3 +100,13 @@ No physical-device checks have been executed in the cloud environment. Record de
 - Cover the ambient sensor to fall below the threshold: progress must reset. Uncover it to begin a new hold. Leave/reopen the task and recreate the process; each requires a new reading and a full hold.
 - Try the live demo, a scheduled alarm, snooze tasks, and wake-up confirmation. Keep the existing flashlight pause/resume and wake-check deadline behavior.
 - Check an unsupported sensor, failed registration, and 15 seconds without any initial reading: the configured fallback remains available. Silence after a valid on-change reading must not trigger that warning.
+
+## 0.12.0 editor and recovery
+
+- Open an alarm: Morning routines is collapsed above the expanded Time / days / name section. Every other settings section starts collapsed. Toggle sections independently; rotate/recreate and check retained expansion state. Test large fonts and TalkBack headers/Info buttons.
+- Change several fields quickly. After a short typing pause, confirm Saved and reopen to verify persistence. Clear a time, enter an invalid game duration, or add an unenrolled barcode: Not saved must remain visible and the last valid alarm must stay scheduled. Fix it and verify autosave resumes.
+- Use Done and Android Back immediately after typing; both must flush the latest valid values. With invalid input, remain in the editor and offer Exit without saving. Test while a normalization/import operation is running.
+- Make multiple autosaved changes, then Exit without saving. Restore the original settings and schedule. Repeat for a newly created alarm: it must disappear. A late save must not recreate it. Revert during editing must restore the baseline without leaving; reopen a previously saved edit and use Revert to recover its previous settings.
+- Return from camera enrollment, audio pickers, Android permission settings, and task demos. Retain the edit session and saved state. Background/recreate the activity midway through editing and verify recovery and validation status.
+- Let an alarm ring while its editor is open. Its delivered session and next occurrence must survive stale autosaves and discard. Try an edit within one second of a due alarm: it must not postpone that ring. Edit/undo a pending snooze and verify its time and count stay intact.
+- Open Pause until: both the picker button and Info must remain visible. Check short pause status/Clear pause, next-ring preview, and weekday/weekend shortcuts in the time section. Long explanations must be available in scrollable modals without crowding the controls.

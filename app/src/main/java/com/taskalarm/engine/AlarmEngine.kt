@@ -105,12 +105,20 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     }
   }
 
-  fun save(json: String) = synchronized(LOCK) {
+  private val edits by lazy { AlarmEdits(context, { save(it, true) }, ::delete, now) }
+  fun beginEdit(json: String): String = synchronized(LOCK) { edits.begin(json) }
+  fun editStatus(token: String): String = synchronized(LOCK) { edits.status(token) }
+  fun saveEdit(token: String, json: String): String = synchronized(LOCK) { edits.save(token,json) }
+  fun revertEdit(token: String, opening: Boolean): String = synchronized(LOCK) { edits.revert(token,opening) }
+  fun discardEdit(token: String): Boolean = synchronized(LOCK) { edits.discard(token) }
+  fun closeEdit(token: String) = synchronized(LOCK) { edits.close(token) }
+
+  fun save(json: String, preserveOccurrence: Boolean = false) = synchronized(LOCK) {
     val alarm = JSONObject(json); validate(alarm)
     val previous = store.find(alarm.getString("id"))
     if(previous?.optBoolean("skipOneTime") == true && !previous.getBoolean("enabled") && alarm.getBoolean("enabled")) { alarm.remove("skipAt"); alarm.remove("skipDate"); alarm.remove("skipOneTime") }
     val scheduleOnly = previous != null && listOf("pauseUntil","skipAt","skipOneTime","skipDate").any { previous.opt(it)?.toString() != alarm.opt(it)?.toString() } && com.taskalarm.app.AlarmDraft.from(previous).copy(pauseUntil=alarm.optLong("pauseUntil"),skipAt=alarm.optLong("skipAt"),skipOneTime=alarm.optBoolean("skipOneTime"),skipDate=alarm.optString("skipDate")) == com.taskalarm.app.AlarmDraft.from(alarm)
-    if(scheduleOnly && previous!!.optBoolean("snoozed")) {
+    if((scheduleOnly || preserveOccurrence) && previous?.optBoolean("snoozed") == true) {
       listOf("snoozed","wakeRetry","snoozeCount","escalationLatched","nextAt").forEach { key -> if(previous.has(key)) alarm.put(key,previous.get(key)) }
     } else { alarm.remove("snoozed"); alarm.remove("wakeRetry") }
     require(store.sessions().none { it.getJSONObject("alarm").getString("id") == alarm.getString("id") }) { "Finish this alarm before editing it" }

@@ -25,6 +25,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.text.DateFormat
 import java.util.Date
@@ -42,6 +45,14 @@ internal fun TaskAlarmApp(activity: MainActivity) {
   MaterialTheme(colorScheme = darkColorScheme(primary = Gold, secondary = Lavender, background = Night, surface = Panel, onPrimary = Night)) {
     var state by remember { mutableStateOf<JSONObject?>(null) }
     var draftJson by rememberSaveable { mutableStateOf<String?>(null) }
+    var editToken by rememberSaveable { mutableStateOf<String?>(null) }
+    var openingJson by rememberSaveable { mutableStateOf<String?>(null) }
+    var savedEditJson by rememberSaveable { mutableStateOf<String?>(null) }
+    var canRevertSaved by rememberSaveable { mutableStateOf(false) }
+    var saveNotice by remember { mutableStateOf("Changes save automatically") }
+    var editorSaving by remember { mutableStateOf(false) }
+    var editorClosing by remember { mutableStateOf(false) }
+    val editMutex = remember { Mutex() }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var scanAction by remember { mutableStateOf<((String) -> Unit)?>(null) }
@@ -71,13 +82,9 @@ internal fun TaskAlarmApp(activity: MainActivity) {
     }
     val active = state?.optJSONObject("active")
     val wakeCheck = state?.optJSONObject("wakeCheck")
+    val draftToken = editToken
     val draft = draftJson?.let { AlarmDraft.from(JSONObject(it)) }
     LaunchedEffect(active?.optString("sessionId"), wakeCheck?.optString("sessionId")) { scanAction = null }
-    BackHandler(enabled = scanAction != null || active != null || wakeCheck != null || draft != null || health) {
-      if (scanAction != null) scanAction = null
-      else if (active == null && wakeCheck != null) activity.moveTaskToBack(true)
-      else if (active == null && !busy) { if(health) health = false else draftJson = null }
-    }
     fun submit(session: JSONObject, check: Boolean, answer: String) {
       work {
         val correct = withContext(Dispatchers.IO) {
@@ -87,19 +94,94 @@ internal fun TaskAlarmApp(activity: MainActivity) {
         if (!correct) error = if (session.getString("kind") == "barcode") "That barcode doesn’t match your saved barcode." else "That answer didn’t match. Give it another try."
       }
     }
-    fun prepareAndRun(test: Boolean, wake: Boolean = false, escalation: Boolean = false) {
-      val current = draft ?: return
+    suspend fun prepareDraft(current: AlarmDraft): AlarmDraft = withContext(Dispatchers.IO) {
+      current.validate()
+      val sound = if(current.normalize && current.soundUri.isNotBlank()) current.playbackUri.ifBlank { SoundProcessor.prepare(activity,current.soundUri,true) } else ""
+      current.copy(playbackUri=sound)
+    }
+    fun openEditor(alarm: AlarmDraft) {
       work {
-        current.validate()
-        val prepared = withContext(Dispatchers.IO) {
-          val sound = if (current.normalize && current.soundUri.isNotBlank()) SoundProcessor.prepare(activity, current.soundUri, true) else ""
-          val result = current.copy(playbackUri = sound)
-          if (escalation) activity.engine.testEscalation(result.json().toString())
-          else if (wake) activity.engine.testWake(result.json().toString())
-          else if (test) activity.engine.test(result.json().toString()) else activity.engine.save(result.json().toString())
+        val token=withContext(Dispatchers.IO) { activity.engine.beginEdit(alarm.json().toString()) }
+        val status=JSONObject(activity.engine.editStatus(token))
+        editToken=token; openingJson=alarm.json().toString(); savedEditJson=openingJson; draftJson=openingJson
+        canRevertSaved=status.getBoolean("canRevert"); saveNotice=if(status.getBoolean("exists")) "Saved · autosave on" else "New alarm · autosave on"
+      }
+    }
+    fun finishEditor(discard: Boolean) {
+      val token=editToken ?: return
+      val current=draft ?: return
+      if(editorClosing || busy) return
+      editorClosing=true
+      scope.launch {
+        try {
+          var restored=true
+          editMutex.withLock {
+            if(discard) restored=withContext(Dispatchers.IO) { activity.engine.discardEdit(token) }
+            else {
+              val prepared=prepareDraft(current)
+              withContext(Dispatchers.IO) { activity.engine.saveEdit(token,prepared.json().toString()); activity.engine.closeEdit(token) }
+            }
+          }
+          if(editToken==token) { draftJson=null; editToken=null; openingJson=null; savedEditJson=null }
+          refresh()
+          if(!restored) error="The alarm rang or changed while editing. Its current settings were kept; reopen it to edit again."
+        } catch(failure: Exception) { error=failure.message ?: "Could not finish this edit" }
+        finally {editorClosing=false}
+      }
+    }
+    fun revertEditor() {
+      val token=editToken ?: return
+      if(editorClosing || busy) return
+      val opening=draftJson!=openingJson
+      editorClosing=true
+      scope.launch {
+        try {
+          val restored=editMutex.withLock { withContext(Dispatchers.IO) { activity.engine.revertEdit(token,opening) } }
+          draftJson=restored; savedEditJson=restored; openingJson=restored
+          canRevertSaved=JSONObject(activity.engine.editStatus(token)).getBoolean("canRevert")
+          saveNotice="Reverted · autosave on"; refresh()
+        } catch(failure: Exception) {error=failure.message ?: "Could not revert this edit"}
+        finally {editorClosing=false}
+      }
+    }
+    LaunchedEffect(editToken,draftJson,busy,editorClosing,active?.optString("sessionId"),wakeCheck?.optString("sessionId")) {
+      val token=editToken ?: return@LaunchedEffect
+      val captured=draftJson ?: return@LaunchedEffect
+      if(captured==savedEditJson || busy || editorClosing || active!=null || wakeCheck!=null) return@LaunchedEffect
+      saveNotice="Changes pending…"
+      delay(800)
+      editorSaving=true
+      try {
+        val saved=editMutex.withLock {
+          val prepared=prepareDraft(AlarmDraft.from(JSONObject(captured)))
+          withContext(Dispatchers.IO) { AlarmDraft.from(JSONObject(activity.engine.saveEdit(token,prepared.json().toString()))).json().toString() }
+        }
+        savedEditJson=saved
+        if(editToken==token && draftJson==captured) draftJson=saved
+        canRevertSaved=JSONObject(activity.engine.editStatus(token)).getBoolean("canRevert")
+        saveNotice="Saved · autosave on"
+      } catch(cancelled: CancellationException) {throw cancelled}
+      catch(failure: Exception) {saveNotice="Not saved · ${failure.message ?: "Check these settings"}"}
+      finally {editorSaving=false}
+    }
+    BackHandler(enabled=scanAction!=null || active!=null || wakeCheck!=null || draft!=null || health) {
+      if(scanAction!=null) scanAction=null
+      else if(active==null && wakeCheck!=null) activity.moveTaskToBack(true)
+      else if(active==null && !busy && !editorClosing) {if(health) health=false else finishEditor(false)}
+    }
+    fun prepareAndRun(test: Boolean, wake: Boolean = false, escalation: Boolean = false) {
+      val current=draft ?: return
+      work {
+        val prepared=editMutex.withLock {
+          val result=prepareDraft(current)
+          withContext(Dispatchers.IO) {
+            if(escalation) activity.engine.testEscalation(result.json().toString())
+            else if(wake) activity.engine.testWake(result.json().toString())
+            else activity.engine.test(result.json().toString())
+          }
           result
         }
-        draftJson = if (test) prepared.json().toString() else null
+        draftJson=prepared.json().toString()
       }
     }
     Surface(Modifier.fillMaxSize(), color = Night) {
@@ -116,9 +198,11 @@ internal fun TaskAlarmApp(activity: MainActivity) {
           health -> HealthScreen(state, onBack = { health = false },
             onAccess = { try { activity.openAccess(it) } catch(failure: Exception) { error = failure.message } },
             onTest = { work { withContext(Dispatchers.IO) { activity.engine.testDelivery() } } })
-          draft != null -> AlarmEditorContent(draft, state?.optJSONObject("readiness"), busy,
-            onChange = { if (!busy) draftJson = it.json().toString() },
-            onBack = { draftJson = null }, onSave = { prepareAndRun(false) }, onTest = { prepareAndRun(true) },
+          draft != null -> AlarmEditorContent(draft, state?.optJSONObject("readiness"), busy || editorClosing,
+            onChange = { if (!busy && !editorClosing) draftJson = it.json().toString() },
+            saveStatus=if(editorClosing) "Updating…" else if(editorSaving) "Saving…" else saveNotice, canRevert=canRevertSaved || draftJson!=openingJson,
+            onDiscard={finishEditor(true)}, onRevert={revertEditor()},
+            onBack = { finishEditor(false) }, onSave = { finishEditor(false) }, onTest = { prepareAndRun(true) },
             onTestWake = { prepareAndRun(true, true) },
             onTestEscalation = { prepareAndRun(true, escalation = true) },
             onPreset = { id -> work {
@@ -129,25 +213,25 @@ internal fun TaskAlarmApp(activity: MainActivity) {
             onSound = { custom -> activity.chooseSound(custom, { uri, name ->
               draftJson?.let { saved ->
                 val current = AlarmDraft.from(JSONObject(saved))
-                if (current.id == draft.id) draftJson = current.copy(soundUri = uri, soundName = name, playbackUri = "").json().toString()
+                if (current.id == draft.id && editToken==draftToken) draftJson = current.copy(soundUri = uri, soundName = name, playbackUri = "").json().toString()
               }
             }, { error = it }) },
             onPlaylistSound = { custom -> activity.chooseSound(custom, { uri, name ->
               draftJson?.let { saved ->
                 val current = AlarmDraft.from(JSONObject(saved))
-                if (current.id == draft.id && current.escalationTones.size < 12)
+                if (current.id == draft.id && editToken==draftToken && current.escalationTones.size < 12)
                   draftJson = current.copy(escalationTones = current.escalationTones + AlarmTone(uri, name.take(120))).json().toString()
               }
             }, { error = it }) },
             onEnroll = { action, id -> if (!busy) scanAction = { value ->
               draftJson?.let { saved ->
                 val current = AlarmDraft.from(JSONObject(saved))
-                draftJson = current.withTasks(action, current.tasks(action).map { if (it.id == id) it.copy(barcode = value) else it }).json().toString()
+                if(editToken==draftToken) draftJson = current.withTasks(action, current.tasks(action).map { if (it.id == id) it.copy(barcode = value) else it }).json().toString()
               }
             } })
           else -> HomeContent(state, busy,
             onHealth = { health = true }, onSkip = { alarm, undo -> work { withContext(Dispatchers.IO) { activity.engine.skipNext(alarm.id,undo) } } },
-            onAdd = { draftJson = AlarmDraft().json().toString() }, onEdit = { draftJson = it.json().toString() },
+            onAdd = { openEditor(AlarmDraft()) }, onEdit = { openEditor(it) },
             onToggle = { alarm, enabled -> work { withContext(Dispatchers.IO) { activity.engine.save(alarm.copy(enabled = enabled).json().toString()) } } },
             onDelete = { deleteTarget = it },
             onTest = { alarm -> work { withContext(Dispatchers.IO) { activity.engine.test(alarm.json().toString()) } } },
@@ -267,13 +351,15 @@ private fun summary(tasks: List<TaskDraft>) = if (tasks.isEmpty()) "No tasks" el
 private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: Boolean, onChange: (AlarmDraft) -> Unit,
   onBack: () -> Unit, onSave: () -> Unit, onTest: () -> Unit, onTestWake: () -> Unit, onAccess: (String) -> Unit,
   onSound: (Boolean) -> Unit, onEnroll: (String, String) -> Unit, onPreset: (String) -> Unit,
-  onPlaylistSound: (Boolean) -> Unit, onTestEscalation: () -> Unit) {
+  onPlaylistSound: (Boolean) -> Unit, onTestEscalation: () -> Unit, saveStatus: String, canRevert: Boolean,
+  onDiscard: ()->Unit, onRevert: ()->Unit) {
+  val editorActivity=androidx.activity.compose.LocalActivity.current as? MainActivity
   Page {
-    Secondary("← Alarms", !busy, onBack)
-    Eyebrow("MAKE THE MORNING YOURS")
-    Text("Set your alarm", style = MaterialTheme.typography.headlineLarge)
+    EditorActions(saveStatus,busy,canRevert,onBack,onDiscard,onRevert)
+    Text("Edit alarm", style = MaterialTheme.typography.headlineLarge)
     AccessCard(readiness, onAccess)
     RoutineSettings(alarm,onChange)
+    EditorSection("Time / days / name", "${alarm.hour.padStart(2,'0')}:${alarm.minute.padStart(2,'0')} · ${alarm.label}", initiallyOpen=true, info="Times follow the phone’s local timezone. Select repeat days or use the weekday/weekend shortcuts. An empty day selection rings once at the next matching time.") {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
       OutlinedTextField(alarm.hour, { onChange(alarm.copy(hour = it.filter(Char::isDigit).take(2))) }, label = { Text("Hour · 24h") },
         singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f), textStyle = MaterialTheme.typography.headlineLarge)
@@ -281,7 +367,6 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
       OutlinedTextField(alarm.minute, { onChange(alarm.copy(minute = it.filter(Char::isDigit).take(2))) }, label = { Text("Minute") },
         singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f), textStyle = MaterialTheme.typography.headlineLarge)
     }
-    Body("Phone’s local time zone")
     OutlinedTextField(alarm.label, { onChange(alarm.copy(label = it.take(120))) }, label = { Text("Alarm name") }, modifier = Modifier.fillMaxWidth())
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
       Text("Enabled"); Switch(alarm.enabled, { onChange(alarm.copy(enabled = it)) })
@@ -291,17 +376,26 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
       weekdayNames.forEachIndexed { index, label -> FilterChip(selected = index + 1 in alarm.days,
         onClick = { onChange(alarm.copy(days = if (index + 1 in alarm.days) alarm.days - (index + 1) else alarm.days + (index + 1))) }, label = { Text(label) }) }
     }
-    Body(if (alarm.days.isEmpty()) "Once, at the next occurrence of this time." else "Repeats on selected days.")
+    FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+      TextButton(onClick={onChange(alarm.copy(days=setOf(1,2,3,4,5)))}) {Text("Weekdays")}
+      TextButton(onClick={onChange(alarm.copy(days=setOf(6,7)))}) {Text("Weekends")}
+      TextButton(onClick={onChange(alarm.copy(days=emptySet()))}) {Text("One time")}
+    }
+    val preview=runCatching { editorActivity?.engine?.preview(alarm.json().toString()) }.getOrNull()
+    if(alarm.enabled && preview!=null) Body("Next: ${DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT).format(Date(preview))}")
+    }
     ScheduleSettings(alarm,onChange)
+    EditorSection("Task behavior", if(alarm.progressiveDifficulty) "Progressive difficulty on" else "Configured difficulty", info="Shuffle chooses a new order when an action starts. Every configured task and round remains required.") {
     DifficultySettings(alarm,onChange)
     ToggleRow("Shuffle task order", alarm.shuffleTasks) { onChange(alarm.copy(shuffleTasks = it)) }
-    Body("Choose a new order when dismiss, snooze, or wake-up tasks start. Every configured task and round is still required.")
-    listOf("dismiss", "snooze").forEach { action ->
-      Text(if (action == "dismiss") "To dismiss" else "To snooze", style = MaterialTheme.typography.titleLarge)
-      Body("Complete every selected task and round in order. An empty list allows this action immediately.")
-      TaskListEditor(alarm, action, onChange, onEnroll)
     }
-    Text("Snooze length", style = MaterialTheme.typography.titleLarge)
+    listOf("dismiss", "snooze").forEach { action ->
+      EditorSection(if(action=="dismiss") "Dismiss tasks" else "Snooze tasks", summary(alarm.tasks(action)), info="Complete every selected task and round. An empty list allows this action immediately. Switching actions starts that action’s tasks from the beginning.") {
+        TaskListEditor(alarm,action,onChange,onEnroll)
+      }
+    }
+    EditorSection("Snooze settings", "${alarm.snoozeMinutes} min · ${if(alarm.maxSnoozes==0) "unlimited" else alarm.maxSnoozes.toString()} snoozes", info="After the snooze limit, complete dismiss tasks. The count carries through wake-up retries and resets for a new regular occurrence.") {
+    Text("Snooze length", style = MaterialTheme.typography.titleMedium)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(1, 5, 10, 15, 30, 60).forEach { minutes ->
       FilterChip(alarm.snoozeMinutes == minutes, { onChange(alarm.copy(snoozeMinutes = minutes)) }, label = { Text("$minutes min") })
     } }
@@ -309,44 +403,38 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(0, 1, 2, 3, 5, 10).forEach { count ->
       FilterChip(alarm.maxSnoozes == count, { onChange(alarm.copy(maxSnoozes = count)) }, label = { Text(if (count == 0) "Unlimited" else count.toString()) })
     } }
-    Body("After the limit, complete dismiss tasks. The count carries through wake-up retries and resets for a new regular alarm occurrence.")
-    Text("Flashlight", style = MaterialTheme.typography.titleLarge)
-    CardBlock {
+    }
+    EditorSection("Flashlight",alarm.flashlightMode.replaceFirstChar(Char::uppercase), info="Keep the flashlight steady or flash once per second until dismissal or snooze. Muting sound keeps it active. It pauses while scanning a barcode or completing a light task.") {
       FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf("off" to "Off", "steady" to "Steady", "flashing" to "Flashing").forEach { (mode, label) ->
           FilterChip(alarm.flashlightMode == mode, { onChange(alarm.copy(flashlightMode = mode)) }, label = { Text(label) },
             enabled = !busy && (mode == "off" || readiness?.optBoolean("flashlightAvailable", true) != false))
         }
       }
-      Body("Keep the flashlight on or flash once per second while ringing and solving tasks, until dismissal or snooze. Muting sound keeps the light active. It pauses while scanning barcodes.")
       if (readiness?.optBoolean("flashlightAvailable", true) == false) Body("This phone has no flashlight.")
       if (alarm.flashlightMode != "off" && readiness?.optBoolean("cameraPermission") != true) {
-        Body("Android requires camera permission to control the flashlight. If permission was denied permanently, enable Camera in app settings.")
+        InfoButton("Flashlight access","Android requires camera permission to control the flashlight. If permission was denied permanently, enable Camera in app settings.")
         Secondary("Allow camera for flashlight", !busy) { onAccess("camera") }
         Secondary("Open app settings", !busy) { onAccess("appSettings") }
       }
     }
-    Text("Volume & solving", style = MaterialTheme.typography.titleLarge)
-    CardBlock {
+    EditorSection("Volume & solving", info="Choose the controls and effects used while the alarm is ringing and tasks are being solved.") {
       ToggleRow("Moving dismiss button", alarm.randomDismiss) { onChange(alarm.copy(randomDismiss = it)) }
-      Body("Use a smaller Dismiss button that changes position every five seconds. Tapping it starts your configured dismiss tasks.")
+      InfoButton("Moving dismiss","Use a smaller Dismiss button that changes position every five seconds. Tapping it starts your configured dismiss tasks.")
       ToggleRow("Vibrate while ringing", alarm.vibrate) { onChange(alarm.copy(vibrate = it)) }
-      Body("Repeat an alarm vibration until dismissal or snooze. Muting sound leaves vibration active.")
+      InfoButton("Alarm vibration","Repeat an alarm vibration until dismissal or snooze. Muting sound leaves vibration active.")
       ToggleRow("Protect alarm volume", alarm.protectVolume) { onChange(alarm.copy(protectVolume = it)) }
-      Body("Keep the volume level present when ringing starts. If already silent, use 50%. Android system controls can still override this. The previous level is restored when ringing ends.")
+      InfoButton("Volume protection","Keep the volume level present when ringing starts. If already silent, use 50%. Android system controls can still override this. The previous level is restored when ringing ends.")
       ToggleRow("Allow mute while solving", alarm.allowMuteWhileSolving) { onChange(alarm.copy(allowMuteWhileSolving = it)) }
-      Body("Show a mute/unmute button during tasks. Muting does not finish a task or stop the alarm. Leaving the app resumes sound.")
+      InfoButton("Mute while solving","Show a mute/unmute button during tasks. Muting does not finish a task or stop the alarm. Leaving the app resumes sound.")
     }
-    Text("Volume escalation", style = MaterialTheme.typography.titleLarge)
-    CardBlock {
+    EditorSection("Volume escalation",if(alarm.escalationEnabled) "On · 45-second tone rotation" else "Off", info="Raise alarm volume to maximum and rotate tones every 45 seconds. Unanswered means no Dismiss or Snooze action selected. The next ring after two completed snoozes escalates immediately. Once triggered, escalation carries through snoozes and wake-up retries. Mute while solving still works, and the previous volume is restored when ringing stops. Android may restrict volume changes.") {
       ToggleRow("Escalate unanswered alarms or after two snoozes", alarm.escalationEnabled) { onChange(alarm.copy(escalationEnabled = it)) }
-      Body("Raise alarm volume to maximum and rotate tones every 45 seconds. The previous volume is restored when ringing stops. Android may restrict volume changes.")
       if (alarm.escalationEnabled) {
         OutlinedTextField(if (alarm.escalationAfterMinutes == 0) "" else alarm.escalationAfterMinutes.toString(),
           { onChange(alarm.copy(escalationAfterMinutes = it.filter(Char::isDigit).take(3).toIntOrNull() ?: 0)) },
           label = { Text("Unanswered delay (minutes)") }, supportingText = { Text("1–120 minutes") },
           keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-        Body("Unanswered means no Dismiss or Snooze action selected. The next ring after two completed snoozes escalates immediately. Once triggered, escalation carries through this alarm’s snoozes and wake-up retries. Mute while solving still works.")
         Text("Escalation playlist · 45 seconds each", style = MaterialTheme.typography.titleMedium)
         alarm.escalationTones.forEachIndexed { index, tone ->
           Text("${index + 1}. ${tone.name}")
@@ -368,43 +456,38 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
           Secondary("Add audio file", !busy) { onPlaylistSound(true) }
         }
         TextButton(enabled = !busy, onClick = { onChange(alarm.copy(escalationTones = AlarmTone.defaults())) }) { Text("Reset playlist to bundled tones") }
-        Body("Choose 1–12 tones. Short tones repeat until their 45-second slot ends; the playlist then loops.")
+        InfoButton("Escalation playlist","Choose 1–12 tones. Short tones repeat until their 45-second slot ends; the playlist then loops.")
         Secondary("Test escalation now", !busy, onTestEscalation)
       }
     }
-    Text("Wake-up check", style = MaterialTheme.typography.titleLarge)
-    CardBlock {
+    EditorSection("Wake-up check",if(alarm.wakeEnabled) "On" else "Off", info="After dismissal, confirm that you are up. No or a missed response deadline rings the alarm again. Checks more than two minutes away get an advance notification two minutes after dismissal, with their chosen time and an early Dismiss check action. Completing confirmation tasks does not extend the response deadline.") {
       ToggleRow("Check that I’m out of bed", alarm.wakeEnabled) { onChange(alarm.copy(wakeEnabled = it)) }
-      Body("After dismissing, get a notification or pop-up asking if you’re up. No response by the deadline makes the alarm ring again. Choosing No rings it again immediately.")
       if (alarm.wakeEnabled) {
         ToggleRow("Randomize check delay",alarm.wakeRandom) { onChange(alarm.copy(wakeRandom=it)) }
         if(alarm.wakeRandom) {
           MinuteInput("Earliest check (minutes)",alarm.wakeMinMinutes) { onChange(alarm.copy(wakeMinMinutes=it)) }
           MinuteInput("Latest check (minutes)",alarm.wakeMaxMinutes) { onChange(alarm.copy(wakeMaxMinutes=it)) }
-          Body("Choose the actual check time once at dismissal. The advance notification shows that chosen time.")
+          InfoButton("Random check timing","The actual check time is chosen once at dismissal. The advance notification shows that chosen time.")
         } else MinuteInput("Ask after dismissal (minutes)", alarm.wakeDelayMinutes) { onChange(alarm.copy(wakeDelayMinutes = it)) }
         MinuteInput("Time to respond (minutes)", alarm.wakeResponseMinutes) { onChange(alarm.copy(wakeResponseMinutes = it)) }
-        Body("For checks more than two minutes away, a notification appears two minutes after dismissal with the check time and a Dismiss check button. Dismissing early cancels that check and its repeat alarm.")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           FilterChip(alarm.wakeMode == "yes_no", { onChange(alarm.copy(wakeMode = "yes_no")) }, label = { Text("Yes / No") })
           FilterChip(alarm.wakeMode == "tasks", { onChange(alarm.copy(wakeMode = "tasks")) }, label = { Text("Complete tasks") })
         }
         if (alarm.wakeMode == "tasks") {
-          Body("Complete every check task before the response time ends to confirm you’re up.")
           TaskListEditor(alarm, "wake", onChange, onEnroll)
         }
         ToggleRow("Reuse dismiss tasks if it rings again", alarm.wakeReuseDismissTasks) { onChange(alarm.copy(wakeReuseDismissTasks = it)) }
         if (!alarm.wakeReuseDismissTasks) {
           Text("Tasks for the repeat alarm", style = MaterialTheme.typography.titleMedium)
-          Body("These replace the dismiss tasks when a wake-up check fails. Snooze tasks stay the same.")
+          InfoButton("Repeat alarm tasks","These replace dismiss tasks when a wake-up check fails. Snooze tasks stay the same.")
           TaskListEditor(alarm, "retry", onChange, onEnroll)
         }
         Secondary("Test wake-up check now", !busy, onTestWake)
-        Body("The check opens immediately in test mode. Its response deadline still applies. No or a timeout rings a test alarm; finishing that test ends it.")
+        InfoButton("Wake-up check test","The check opens immediately. Its response deadline still applies. No or timeout rings a test alarm; finishing that test ends it.")
       }
     }
-    Text("Alarm sound", style = MaterialTheme.typography.titleLarge)
-    CardBlock {
+    EditorSection("Alarm sound",alarm.soundName, info="Choose a phone alarm sound, bundled tone, or imported file. Optional normalization raises the sample peak without clipping; the phone’s alarm volume still controls playback. Files up to 5 minutes are supported; unsupported or oversized files fail before saving.") {
       Text(alarm.soundName, style = MaterialTheme.typography.titleMedium)
       Secondary("Choose phone alarm sound", !busy) { onSound(false) }
       Secondary("Import an audio file", !busy) { onSound(true) }
@@ -418,12 +501,12 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
           Text("Normalize chosen sound", modifier = Modifier.weight(1f)); Switch(alarm.normalize, { onChange(alarm.copy(normalize = it)) })
         }
       }
-      Body("Normalization brings the audio peak near maximum without clipping. Up to 5 minutes of audio; large or unsupported files may fail. Your phone’s alarm volume still controls playback.")
     }
-    if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-    Primary(if (busy) "Preparing…" else "Save alarm", !busy, onSave)
-    Secondary("Test sound & tasks now", !busy, onTest)
-    Body("An alarm test rings immediately without scheduling this draft or follow-up checks. Test snooze ends the test. Use the separate wake-up check test above to try that flow.")
+    EditorSection("Test alarm",info="A test rings immediately without changing the saved schedule or creating follow-up checks. Test snooze ends the test. Use the separate wake-up check test to try that flow.") {
+      Secondary("Test sound & tasks now",!busy,onTest)
+    }
+    if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+    Secondary("Done",!busy,onSave)
     Spacer(Modifier.height(20.dp))
   }
 }
@@ -466,7 +549,7 @@ private fun TaskCard(index: Int, task: TaskDraft, onChange: (TaskDraft) -> Unit,
         NativeTaskDemo(task)
       } else if (task.kind == "breakout") {
         BreakoutPreview(task)
-        Body("Difficulty changes ball speed and paddle size. Points are optional; only active play time completes this task.")
+        InfoButton("Breakout","Difficulty changes ball speed and paddle size. Only active play time completes the task; points are optional.")
         OutlinedTextField(if (task.gameSeconds == 0) "" else task.gameSeconds.toString(), { onChange(task.copy(gameSeconds = it.filter(Char::isDigit).take(4).toIntOrNull() ?: 0)) },
           label = { Text("Active play per round (seconds)") }, supportingText = { Text("5–3600 seconds") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(30, 60, 120, 300).forEach { seconds ->
@@ -477,7 +560,7 @@ private fun TaskCard(index: Int, task: TaskDraft, onChange: (TaskDraft) -> Unit,
       } else Column(Modifier.fillMaxWidth().background(Night, MaterialTheme.shapes.medium).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Eyebrow("EXAMPLE · ${task.difficulty.uppercase()}")
         Text(task.example, color = Lavender, fontFamily = FontFamily.Monospace, fontSize = 21.sp)
-        Body(when (task.kind) { "text" -> "Case sensitive. A fresh string each round."; "memory" -> "Watch 3, 5, or 7 numbered tiles flash, then tap them in the same order."; else -> "New numbers each round. Enter the answer." })
+        InfoButton(task.name,when(task.kind) {"text" -> "Case sensitive. A fresh string each round."; "memory" -> "Watch 3, 5, or 7 numbered tiles flash, then tap them in the same order."; else -> "New numbers each round. Enter the answer."})
       }
     } else if(task.kind == "barcode") {
       FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("any", "specific").forEach { mode ->

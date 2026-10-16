@@ -13,8 +13,8 @@ android {
         applicationId = "com.taskalarm.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.11.1"
+        versionCode = 14
+        versionName = "0.12.0"
     }
     buildFeatures { compose = true }
     testOptions { unitTests.isIncludeAndroidResources = true }

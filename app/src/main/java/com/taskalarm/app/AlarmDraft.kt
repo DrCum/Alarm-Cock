@@ -158,7 +158,7 @@ data class AlarmDraft(
         value.optString("soundUri"), value.optString("soundName", "Default phone alarm"), value.optBoolean("normalize"), value.optString("playbackUri"),
         value.optBoolean("protectVolume"), value.optBoolean("allowMuteWhileSolving"), value.optBoolean("wakeEnabled"),
         value.optInt("wakeDelayMinutes", 5), value.optInt("wakeResponseMinutes", 5), value.optString("wakeMode", "yes_no"),
-        tasks("wakeTasks", listOf(TaskDraft())), value.optBoolean("wakeReuseDismissTasks", true), tasks("wakeRetryTasks", listOf(TaskDraft())),
+        tasks("wakeTasks", listOf(TaskDraft(id="${value.getString("id")}-wake-default"))), value.optBoolean("wakeReuseDismissTasks", true), tasks("wakeRetryTasks", listOf(TaskDraft(id="${value.getString("id")}-retry-default"))),
         value.optString("flashlightMode", "off"), value.optBoolean("randomDismiss"),
         value.optInt("maxSnoozes", 0), value.optBoolean("shuffleTasks"), value.optBoolean("vibrate"),
         value.optBoolean("escalationEnabled"), value.optInt("escalationAfterMinutes", 2),

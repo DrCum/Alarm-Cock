@@ -35,7 +35,7 @@ internal fun ExtendedTaskSettings(task: TaskDraft, onChange: (TaskDraft) -> Unit
   val activity = LocalActivity.current as? MainActivity ?: return
   val ready = activity.engine.readiness()
   if(task.kind == "walk") {
-    Body("Walk with the phone and keep the task visible. Only steps detected during the active task count. Step sensors measure movement; they cannot prove you are standing.")
+    InfoButton("Walking task","Walk with the phone and keep the task visible. Only steps detected during the active task count. Step sensors measure movement; they cannot prove you are standing.")
     IntegerField("Steps per round",task.stepTarget,"5–200") { onChange(task.copy(stepTarget=it)) }
     FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) { listOf(20,30,40).forEach { steps -> FilterChip(task.stepTarget==steps,{onChange(task.copy(stepTarget=steps))},label={Text("$steps steps")}) } }
     Body("Step sensor: ${if(ready.optBoolean("stepSensor")) "available" else "unavailable; fallback will be offered"}")
@@ -44,16 +44,17 @@ internal fun ExtendedTaskSettings(task: TaskDraft, onChange: (TaskDraft) -> Unit
   if(task.kind == "light") {
     IntegerField("Minimum light (lux)",task.lightLux,"50–2000; try the live meter in your room") { onChange(task.copy(lightLux=it)) }
     IntegerField("Continuous hold (seconds)",task.lightHoldSeconds,"2–30") { onChange(task.copy(lightHoldSeconds=it)) }
-    Body("Light sensor: ${if(ready.optBoolean("lightSensor")) "available" else "unavailable; fallback will be offered"}. This task measures brightness, not location or daylight. The alarm flashlight pauses during measurement.")
+    Body("Light sensor: ${if(ready.optBoolean("lightSensor")) "available" else "unavailable; fallback will be offered"}")
+    InfoButton("Light task","This task measures brightness, not location or daylight. Any value at or above the target qualifies. The alarm flashlight pauses during measurement.")
   }
   if(task.kind == "maze") {
     FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) { listOf("tilt","touch").forEach { mode -> FilterChip(task.controlMode==mode,{onChange(task.copy(controlMode=mode))},label={Text(mode.replaceFirstChar(Char::uppercase))}) } }
-    Body("Tilt the phone or use direction controls. Difficulty changes maze length and ball speed. Checkpoints must be reached in order.")
+    InfoButton("Maze controls","Tilt the phone or use direction controls. Difficulty changes maze length and ball speed. Checkpoints must be reached in order.")
     if(!ready.optBoolean("tiltSensor") && task.controlMode=="tilt") Body("No tilt sensor detected. Choose touch controls or use the configured fallback.")
   }
   Text("If the sensor is unavailable",style=MaterialTheme.typography.titleSmall)
   FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) { listOf("math","text").forEach { kind -> FilterChip(task.fallbackKind==kind,{onChange(task.copy(fallbackKind=kind))},label={Text("${kind.replaceFirstChar(Char::uppercase)} fallback")}) } }
-  Body("The fallback replaces this task if sensor access fails or no readings arrive for 15 seconds. Its difficulty and remaining rounds still apply.")
+  InfoButton("Sensor fallback","The fallback replaces this task if sensor access fails or no initial reading arrives within 15 seconds. Walking and tilt also detect later interruptions in events. Remaining rounds and following tasks still apply.")
   if(task.kind != "maze") NativeTaskDemo(task)
 }
 
