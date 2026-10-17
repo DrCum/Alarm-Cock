@@ -28,7 +28,7 @@ internal object WakeUpPolicy {
       require(alarm.optInt("wakeMinMinutes", 3) in 1..1440 && alarm.optInt("wakeMaxMinutes", 7) in alarm.optInt("wakeMinMinutes", 3)..1440) { "Choose a random check range of 1–1440 minutes, with maximum at least minimum" }
     }
     for (key in listOf("dismissTasks", "snoozeTasks", "wakeTasks", "wakeRetryTasks")) {
-      val used = key in listOf("dismissTasks","snoozeTasks") || (alarm.optBoolean("wakeEnabled") &&
+      val used = key == "dismissTasks" || (key == "snoozeTasks" && alarm.optBoolean("snoozeEnabled", true)) || (alarm.optBoolean("wakeEnabled") &&
         ((key=="wakeTasks" && alarm.optString("wakeMode","yes_no")=="tasks") || (key=="wakeRetryTasks" && !alarm.optBoolean("wakeReuseDismissTasks",true))))
       if(!used) continue
       val tasks = alarm.optJSONArray(key) ?: continue

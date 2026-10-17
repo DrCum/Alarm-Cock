@@ -58,7 +58,7 @@ No physical-device checks have been executed in the cloud environment. Record de
 
 ## Moving dismiss and Breakout
 
-- Enable Moving dismiss button and verify the compact target stays within the visible panel, moves every five seconds, and starts dismiss tasks without skipping them. Test large fonts, landscape, TalkBack, and a snooze-to-dismiss action switch.
+- Enable Moving dismiss button and verify the compact target can appear near all four corners and the center of the visible alarm screen, stays clear of system bars/the keyboard and the smaller bottom-right Snooze button, moves every five seconds, and starts dismiss tasks without skipping them. Test large fonts, landscape, TalkBack, and a snooze-to-dismiss action switch.
 - Add Breakout at each difficulty. Change active seconds and idle reset, save, and reopen. Combine it with math, text, barcode, and multiple rounds for dismiss, snooze, and wake-up confirmation.
 - Keep moving the paddle until the timer completes even with a low score. Miss balls repeatedly; there must be no score/lives gate. Hold a stationary finger, stop touching, and background the app: time must stop increasing. At 20 seconds idle, the current round resets.
 - Return within the idle limit and after it. Kill/recreate the process mid-game and check checkpoint restoration and expired progress. Confirm a wake-up-check deadline still re-rings while playing.
@@ -116,3 +116,9 @@ No physical-device checks have been executed in the cloud environment. Record de
 - Check the list, expanded/collapsed editor sections, Info dialogs, text fields, chips, switches, task previews, and active alarm/wake-check screens for readable text and clear focus/selection states. Startup and navigation/status bars should match the near-black background.
 - Play Breakout, maze, and memory: walls, paddle, checkpoints, ball, numbered tiles, and playback flashes must stay distinct. Check memory tile labels both while playing back and while answering.
 - With TalkBack, Info buttons should announce the section name. Revoke alarm access, edit an enabled alarm, then grant access from the setup card; verify the pending valid edit autosaves after returning.
+
+## 0.12.2 moving actions and snooze switch
+
+- With moving dismiss enabled, scroll the task screen, rotate, open the answer keyboard, and change font size. Dismiss must use the current visible viewport instead of scrolling away with page content. Snooze stays smaller and fixed at bottom right; its disabled state still respects snooze limits and an active snooze task. Finish dismiss tasks and confirm the floating Dismiss disappears during that action.
+
+- Turn off Allow snooze, save/reopen, and test with moving dismiss on and off. Only Dismiss should be offered. Dismissal must still require all selected tasks. Let a wake-up check fail: the repeat ring must also have no Snooze. Re-enable snooze and confirm its previous length, limit, and tasks remain. Save/apply a routine with snooze disabled and confirm that choice carries over. Upgrading old alarms/routines must leave snooze enabled.

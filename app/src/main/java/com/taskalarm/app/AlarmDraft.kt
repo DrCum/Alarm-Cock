@@ -89,7 +89,8 @@ data class AlarmDraft(
   val pauseUntil: Long = 0,
   val skipAt: Long = 0,
   val skipOneTime: Boolean = false,
-  val skipDate: String = ""
+  val skipDate: String = "",
+  val snoozeEnabled: Boolean = true
 ) {
   fun json() = JSONObject().put("id", id).put("label", label).put("hour", hour).put("minute", minute)
     .put("days", JSONArray(days.sorted())).put("enabled", enabled).put("snoozeMinutes", snoozeMinutes)
@@ -100,7 +101,7 @@ data class AlarmDraft(
     .put("wakeMode", wakeMode).put("wakeTasks", JSONArray(wakeTasks.map { it.json() }))
     .put("wakeReuseDismissTasks", wakeReuseDismissTasks).put("wakeRetryTasks", JSONArray(wakeRetryTasks.map { it.json() }))
     .put("flashlightMode", flashlightMode)
-    .put("randomDismiss", randomDismiss)
+    .put("randomDismiss", randomDismiss).put("snoozeEnabled", snoozeEnabled)
     .put("maxSnoozes", maxSnoozes).put("shuffleTasks", shuffleTasks).put("vibrate", vibrate)
     .put("escalationEnabled", escalationEnabled).put("escalationAfterMinutes", escalationAfterMinutes)
     .put("escalationTones", JSONArray(escalationTones.map { it.json() }))
@@ -125,7 +126,7 @@ data class AlarmDraft(
       require(wakeMode in listOf("yes_no", "tasks"))
       require(wakeMode != "tasks" || wakeTasks.isNotEmpty()) { "Choose at least one task to confirm you’re awake." }
     }
-    val configured = dismissTasks + snoozeTasks + if (wakeEnabled) (if (wakeMode == "tasks") wakeTasks else emptyList()) + (if (!wakeReuseDismissTasks) wakeRetryTasks else emptyList()) else emptyList()
+    val configured = dismissTasks + (if(snoozeEnabled) snoozeTasks else emptyList()) + if (wakeEnabled) (if (wakeMode == "tasks") wakeTasks else emptyList()) + (if (!wakeReuseDismissTasks) wakeRetryTasks else emptyList()) else emptyList()
     for (task in configured) {
       when(task.kind) {
         "walk" -> require(task.stepTarget in 5..200) { "Choose 5–200 steps" }
@@ -163,7 +164,7 @@ data class AlarmDraft(
         value.optInt("maxSnoozes", 0), value.optBoolean("shuffleTasks"), value.optBoolean("vibrate"),
         value.optBoolean("escalationEnabled"), value.optInt("escalationAfterMinutes", 2),
         value.optJSONArray("escalationTones")?.let { tones -> (0 until tones.length()).map { AlarmTone.from(tones.getJSONObject(it)) } } ?: AlarmTone.defaults(), value.optBoolean("progressiveDifficulty"), value.optBoolean("wakeRandom"),
-        value.optInt("wakeMinMinutes", 3), value.optInt("wakeMaxMinutes", 7), value.optLong("pauseUntil"), value.optLong("skipAt"), value.optBoolean("skipOneTime"), value.optString("skipDate"))
+        value.optInt("wakeMinMinutes", 3), value.optInt("wakeMaxMinutes", 7), value.optLong("pauseUntil"), value.optLong("skipAt"), value.optBoolean("skipOneTime"), value.optString("skipDate"), value.optBoolean("snoozeEnabled", true))
     }
   }
 }

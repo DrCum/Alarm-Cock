@@ -320,7 +320,7 @@ private fun HomeContent(state: JSONObject?, busy: Boolean, onAdd: () -> Unit, on
         Body(if (alarm.days.isEmpty()) "One time" else alarm.days.sorted().joinToString("  ") { weekdayNames[it - 1] })
         HorizontalDivider()
         Body("Dismiss · ${summary(alarm.dismissTasks)}")
-        Body("Snooze · ${summary(alarm.snoozeTasks)}")
+        Body(if(alarm.snoozeEnabled) "Snooze · ${summary(alarm.snoozeTasks)}" else "Snooze disabled")
         if (alarm.enabled && value.has("nextAt")) Text("Next: ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(value.getLong("nextAt")))}", color = MaterialTheme.colorScheme.tertiary)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           if((alarm.skipDate.isNotEmpty() && alarm.skipDate >= java.time.LocalDate.now().toString()) || alarm.skipAt > System.currentTimeMillis() || alarm.skipOneTime) TextButton(enabled = !busy, onClick = { onSkip(alarm,true) }) { Text("Undo skip") }
@@ -385,11 +385,14 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
     ToggleRow("Shuffle task order", alarm.shuffleTasks) { onChange(alarm.copy(shuffleTasks = it)) }
     }
     listOf("dismiss", "snooze").forEach { action ->
-      EditorSection(if(action=="dismiss") "Dismiss tasks" else "Snooze tasks", summary(alarm.tasks(action)), info="Complete every selected task and round. An empty list allows this action immediately. Switching actions starts that action’s tasks from the beginning.") {
-        TaskListEditor(alarm,action,onChange,onEnroll)
+      EditorSection(if(action=="dismiss") "Dismiss tasks" else "Snooze tasks", if(action=="snooze" && !alarm.snoozeEnabled) "Disabled" else summary(alarm.tasks(action)), info="Complete every selected task and round. An empty list allows this action immediately. Switching actions starts that action’s tasks from the beginning.") {
+        if(action!="snooze" || alarm.snoozeEnabled) TaskListEditor(alarm,action,onChange,onEnroll)
+        else Body("Turn on Allow snooze in Snooze settings to use these tasks. Your saved tasks are kept.")
       }
     }
-    EditorSection("Snooze settings", "${alarm.snoozeMinutes} min · ${if(alarm.maxSnoozes==0) "unlimited" else alarm.maxSnoozes.toString()} snoozes", info="After the snooze limit, complete dismiss tasks. The count carries through wake-up retries and resets for a new regular occurrence.") {
+    EditorSection("Snooze settings", if(!alarm.snoozeEnabled) "Disabled" else "${alarm.snoozeMinutes} min · ${if(alarm.maxSnoozes==0) "unlimited" else alarm.maxSnoozes.toString()} snoozes", info="Turn off Allow snooze to require dismissal. Your snooze length, limit, and tasks are kept for later. After the snooze limit, complete dismiss tasks. The count carries through wake-up retries and resets for a new regular occurrence.") {
+    ToggleRow("Allow snooze", alarm.snoozeEnabled) { onChange(alarm.copy(snoozeEnabled = it)) }
+    if(alarm.snoozeEnabled) {
     Text("Snooze length", style = MaterialTheme.typography.titleMedium)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(1, 5, 10, 15, 30, 60).forEach { minutes ->
       FilterChip(alarm.snoozeMinutes == minutes, { onChange(alarm.copy(snoozeMinutes = minutes)) }, label = { Text("$minutes min") })
@@ -398,6 +401,7 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(0, 1, 2, 3, 5, 10).forEach { count ->
       FilterChip(alarm.maxSnoozes == count, { onChange(alarm.copy(maxSnoozes = count)) }, label = { Text(if (count == 0) "Unlimited" else count.toString()) })
     } }
+    }
     }
     EditorSection("Flashlight",alarm.flashlightMode.replaceFirstChar(Char::uppercase), info="Keep the flashlight steady or flash once per second until dismissal or snooze. Muting sound keeps it active. It pauses while scanning a barcode or completing a light task.") {
       FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -415,7 +419,7 @@ private fun AlarmEditorContent(alarm: AlarmDraft, readiness: JSONObject?, busy: 
     }
     EditorSection("Volume & solving", info="Choose the controls and effects used while the alarm is ringing and tasks are being solved.") {
       ToggleRow("Moving dismiss button", alarm.randomDismiss) { onChange(alarm.copy(randomDismiss = it)) }
-      InfoButton("Moving dismiss","Use a smaller Dismiss button that changes position every five seconds. Tapping it starts your configured dismiss tasks.")
+      InfoButton("Moving dismiss","Use a smaller Dismiss button that moves anywhere on the visible screen every five seconds. Snooze stays in the bottom-right corner and is smaller still. Tapping Dismiss starts your configured dismiss tasks.")
       ToggleRow("Vibrate while ringing", alarm.vibrate) { onChange(alarm.copy(vibrate = it)) }
       InfoButton("Alarm vibration","Repeat an alarm vibration until dismissal or snooze. Muting sound leaves vibration active.")
       ToggleRow("Protect alarm volume", alarm.protectVolume) { onChange(alarm.copy(protectVolume = it)) }
@@ -579,6 +583,11 @@ private fun TaskCard(index: Int, task: TaskDraft, onChange: (TaskDraft) -> Unit,
 private fun RingingContent(active: JSONObject, busy: Boolean, onAction: (String) -> Unit, onSubmit: (String) -> Unit, onScan: () -> Unit, onMute: (Boolean) -> Unit) {
   val alarm = AlarmDraft.from(active.getJSONObject("alarm"))
   val action = if (active.isNull("action")) null else active.getString("action")
+  val snoozeCount = active.getJSONObject("alarm").optInt("snoozeCount")
+  val maySnooze = alarm.snoozeEnabled && (alarm.maxSnoozes == 0 || snoozeCount < alarm.maxSnoozes)
+  val snoozeLabel = if (!alarm.snoozeEnabled) "Snooze disabled" else if (!maySnooze) "Snooze limit reached" else if (active.getBoolean("test")) "Test snooze" else "Snooze · ${alarm.snoozeMinutes} minutes"
+  val fontScale = androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f)
+  Box(Modifier.fillMaxSize().imePadding()) {
   Page {
     Spacer(Modifier.height(20.dp))
     Eyebrow(if (active.getBoolean("test")) "TEST ALARM" else "TIME TO WAKE UP")
@@ -595,14 +604,22 @@ private fun RingingContent(active: JSONObject, busy: Boolean, onAction: (String)
     }
     if (active.optBoolean("volumeGuardBlocked")) Body("Android prevented the volume guard. Check your phone’s alarm volume.")
     if (active.optBoolean("flashlightBlocked")) Body("Flashlight unavailable. Check camera access or close other camera apps. Your alarm and tasks continue.")
-    if (alarm.randomDismiss && action != "dismiss") MovingDismissButton(active.getString("sessionId"), !busy) { onAction("dismiss") }
-    else Primary(if (action == "dismiss") "Complete tasks to dismiss" else "Dismiss alarm", !busy && action != "dismiss") { onAction("dismiss") }
-    val snoozeCount = active.getJSONObject("alarm").optInt("snoozeCount")
-    val maySnooze = alarm.maxSnoozes == 0 || snoozeCount < alarm.maxSnoozes
-    Secondary(if (!maySnooze) "Snooze limit reached" else if (active.getBoolean("test")) "Test snooze" else "Snooze · ${alarm.snoozeMinutes} minutes", !busy && action != "snooze" && maySnooze) { onAction("snooze") }
-    if (alarm.maxSnoozes > 0) Body("Snoozes used: $snoozeCount / ${alarm.maxSnoozes}")
+    if (alarm.randomDismiss) {
+      if (action != "dismiss") Body("Find Dismiss anywhere on the screen. It moves every five seconds and starts your dismiss tasks.")
+      else Body("Complete tasks to dismiss")
+      Body(snoozeLabel)
+    } else {
+      Primary(if (action == "dismiss") "Complete tasks to dismiss" else "Dismiss alarm", !busy && action != "dismiss") { onAction("dismiss") }
+      if(alarm.snoozeEnabled) Secondary(snoozeLabel, !busy && action != "snooze" && maySnooze) { onAction("snooze") }
+    }
+    if (alarm.snoozeEnabled && alarm.maxSnoozes > 0) Body("Snoozes used: $snoozeCount / ${alarm.maxSnoozes}")
     if (action != null) Body("Switching actions starts that action’s tasks from the beginning.")
     if (active.getBoolean("test")) Body("To stop a test, finish its tasks or use Android Settings → Apps → Task Alarm → Force stop.")
+    if (alarm.randomDismiss && alarm.snoozeEnabled) Spacer(Modifier.height(52.dp * fontScale))
+  }
+  if (alarm.randomDismiss) MovingAlarmActions(active.getString("sessionId"), action != "dismiss", !busy,
+    alarm.snoozeEnabled, !busy && action != "snooze" && maySnooze, snoozeLabel,
+    onDismiss = { onAction("dismiss") }, onSnooze = { onAction("snooze") })
   }
 }
 

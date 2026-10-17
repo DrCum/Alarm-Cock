@@ -48,11 +48,11 @@ The foreground service owns the timer and playlist, with a CPU wake lock while t
 - **Vibration:** optionally repeat a vibration pattern while ringing. Sound mute leaves vibration active; dismissal, snooze, session switches, and service teardown clean up the effect. Android may still apply device/DND rules.
 - **Bundled sounds:** Beacon, Pulse, and Chime are original synthesized PCM16 WAV presets. Selection copies a versioned sound into private storage, so playback works offline and retains the chosen version. The source generator is in `scripts/generate-sounds.py`; imported/system sounds and peak normalization remain available.
 
-Existing alarms keep unlimited snoozes, ordered tasks, and vibration off. The compact moving dismiss target now scales with the phone’s font size while staying inside its panel.
+Existing alarms keep unlimited snoozes, ordered tasks, and vibration off. The compact moving dismiss target now scales with the phone’s font size while staying inside the visible alarm screen.
 
 ## Moving dismiss and Breakout (0.4.0)
 
-**Moving dismiss button** is an optional per-alarm setting. A compact button with a minimum 48 dp touch target moves among nine positions in a bounded panel every five seconds. Tapping it starts the existing dismiss tasks; it never skips them. Existing alarms keep the original button unless enabled.
+**Moving dismiss button** is an optional per-alarm setting. A compact button (normally 112 × 48 dp) moves to a random position across the full visible alarm screen every five seconds. Safe system insets and the keyboard stay outside its area. Snooze stays fixed in the bottom-right corner with a smaller target (normally 80 × 36 dp); Dismiss avoids that target. Both scale with font size, and movement pauses in the background. Tapping it starts the existing dismiss tasks; it never skips them. Existing alarms keep the original button unless enabled.
 
 Add **Breakout** to dismiss, snooze, or wake-up confirmation tasks. Set difficulty, active play per round (5–3600 seconds), and idle reset (5–120 seconds, default 20). Difficulty changes paddle width and ball speed. Play time, rather than score, completes each round; balls are unlimited. The native engine credits foreground frames only while paddle movement occurred within the last 2.5 seconds. Holding a stationary finger does not sustain time. Twenty seconds without movement resets the current round by default; leaving the foreground pauses credit and counts toward the idle gap. Progress checkpoints save approximately once per second. App recreation retains recent checkpoints; a long idle gap resets time. Scores and personal bests are kept locally and never unlock an alarm.
 
@@ -108,9 +108,9 @@ There is no backend, downloadable catalog, JavaScript game host, OTA task distri
 
 ## Workspace verification
 
-Version 0.12.1 passed `:app:assembleDebug`, `:app:testDebugUnitTest`, and `:app:lintDebug` on 2026-10-16. All 124 tests passed, including native edit-session autosave/recovery, independent alarm delivery, pending snooze preservation, steady-light timing, scheduling/timezone boundaries, wake checks, routines, sensor/game completion, and audio/escalation recovery. Lint reported zero errors and 32 warnings, including diagnostics for alarm-lifetime wake locks; the service releases each lock when its effect stops. Main text/button color pairs exceed 4.5:1 contrast. APK signing matches previous builds, and ZIP integrity and embedded APK hashes were verified. The standalone universal debug APK is approximately 36 MiB and includes ARM64, ARMv7, x86, and x86_64 native libraries.
+Version 0.12.2 passed `:app:assembleDebug`, `:app:testDebugUnitTest`, and `:app:lintDebug` on 2026-10-16. All 127 tests passed, including disabled snooze and legacy compatibility, native edit-session autosave/recovery, independent alarm delivery, pending snooze preservation, steady-light timing, scheduling/timezone boundaries, wake checks, routines, sensor/game completion, and audio/escalation recovery. Lint reported zero errors and 32 warnings, including diagnostics for alarm-lifetime wake locks; the service releases each lock when its effect stops. Main text/button color pairs exceed 4.5:1 contrast. APK signing matches previous builds, and ZIP integrity and embedded APK hashes were verified. The standalone universal debug APK is approximately 36 MiB and includes ARM64, ARMv7, x86, and x86_64 native libraries.
 
-The user reported that basic ringing and task dismissal worked in 0.1.0. The volume controls, wake-up checks, advance reminders, flashlight modes, game/button controls, memory playback, vibration, bundled sounds, and escalation still require physical-device verification, especially Doze, notification actions, and reboot recovery. The 0.12.1 signing certificate matches earlier builds for installation over the existing app.
+The user reported that basic ringing and task dismissal worked in 0.1.0. The volume controls, wake-up checks, advance reminders, flashlight modes, game/button controls, memory playback, vibration, bundled sounds, and escalation still require physical-device verification, especially Doze, notification actions, and reboot recovery. The 0.12.2 signing certificate matches earlier builds for installation over the existing app.
 
 ## Browser download
 
@@ -149,3 +149,9 @@ Native edit tokens serialize saving and rollback. Closed or superseded editors c
 The default theme uses the supplied Folderstorm screenshot as a visual reference: near-black backgrounds, plum panels with fine borders, lavender controls, warm white text, and small gold highlights. Dialogs, task previews, game boards, and the Android startup window share this palette. The memory task retains four distinct tile colors plus numbers, with a gold flash during playback. This is a screenshot-based interpretation, not extracted website CSS.
 
 Info buttons announce their section to screen readers. Autosave retries after alarm access changes, so granting a missing permission can save a waiting valid edit without retyping.
+
+### Full-screen moving dismiss and optional snooze (0.12.2)
+
+Moving Dismiss now uses continuous random positions across the visible alarm screen rather than nine positions in a short panel. When enabled, Snooze is smaller and stays at bottom right. Dismiss avoids the Snooze target, movement pauses in the background, and the layout adapts to the keyboard, rotation, and font size.
+
+In **Snooze settings**, turn off **Allow snooze** to remove Snooze from the ringing screen and block native snooze requests, including test rings and wake-up retries. Existing alarms and routines default to allowing snooze. The saved length, limit, and task list remain intact while disabled; unused task enrollment is validated again before enabling snooze.

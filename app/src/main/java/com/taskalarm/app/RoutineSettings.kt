@@ -51,7 +51,7 @@ internal fun RoutineSettings(alarm: AlarmDraft, onChange: (AlarmDraft)->Unit) {
           Text("$label: ${if(tasks.isEmpty()) "No tasks" else tasks.joinToString { "${it.name} (${it.difficulty}, ${it.rounds} rounds): ${it.example}" }}")
         }
         val r=routine.alarm
-        Body("Sound: ${r.soundName}. Snooze: ${r.snoozeMinutes} minutes, limit ${if(r.maxSnoozes==0) "unlimited" else r.maxSnoozes}. Progressive difficulty: ${r.progressiveDifficulty}.")
+        Body("Sound: ${r.soundName}. Snooze: ${if(r.snoozeEnabled) "${r.snoozeMinutes} minutes, limit ${if(r.maxSnoozes==0) "unlimited" else r.maxSnoozes}" else "disabled"}. Progressive difficulty: ${r.progressiveDifficulty}.")
         Body("Wake checks: ${r.wakeEnabled}; ${if(r.wakeRandom) "${r.wakeMinMinutes}–${r.wakeMaxMinutes}" else r.wakeDelayMinutes} minute delay; ${r.wakeResponseMinutes} minutes to respond. Mode: ${r.wakeMode}. Reuse dismiss tasks: ${r.wakeReuseDismissTasks}.")
         Body("Flashlight: ${r.flashlightMode}. Vibration: ${r.vibrate}. Mute while solving: ${r.allowMuteWhileSolving}. Volume protection: ${r.protectVolume}. Moving dismiss: ${r.randomDismiss}. Shuffle: ${r.shuffleTasks}.")
         Body("Volume escalation: ${r.escalationEnabled}, delay ${r.escalationAfterMinutes} minutes. Playlist: ${r.escalationTones.joinToString { it.name }}.")

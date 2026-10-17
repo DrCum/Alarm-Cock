@@ -86,7 +86,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     for (key in listOf("dismissTasks", "snoozeTasks", "wakeTasks", "wakeRetryTasks")) {
       val tasks = alarm.optJSONArray(key) ?: continue
       require(tasks.length() <= 10) { "Choose at most 10 tasks per action" }
-      val used = key in listOf("dismissTasks", "snoozeTasks") || (alarm.optBoolean("wakeEnabled") &&
+      val used = key == "dismissTasks" || (key == "snoozeTasks" && alarm.optBoolean("snoozeEnabled", true)) || (alarm.optBoolean("wakeEnabled") &&
         ((key == "wakeTasks" && alarm.optString("wakeMode", "yes_no") == "tasks") || (key == "wakeRetryTasks" && !alarm.optBoolean("wakeReuseDismissTasks", true))))
       for (i in 0 until tasks.length()) {
         val task = tasks.getJSONObject(i)
@@ -265,8 +265,9 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
   fun begin(sessionId: String, action: String) = synchronized(LOCK) {
     require(action in listOf("dismiss", "snooze"))
     val sessions = store.sessions(); val session = current(sessions, sessionId)
-    if (session.optString("action") == action) return@synchronized
     val alarm = session.getJSONObject("alarm")
+    if (action == "snooze") check(alarm.optBoolean("snoozeEnabled", true)) { "Snooze is disabled for this alarm. Complete your dismiss tasks." }
+    if (session.optString("action") == action) return@synchronized
     EscalationPolicy.refresh(session, AlarmClockStamp.current(context, now()))
     if (action == "snooze") check(alarm.optInt("maxSnoozes", 0) == 0 || alarm.optInt("snoozeCount") < alarm.optInt("maxSnoozes")) { "Snooze limit reached. Complete your dismiss tasks." }
     val key = if (action == "snooze") "snoozeTasks" else "dismissTasks"
