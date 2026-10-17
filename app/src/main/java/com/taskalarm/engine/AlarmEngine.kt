@@ -90,7 +90,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
         ((key == "wakeTasks" && alarm.optString("wakeMode", "yes_no") == "tasks") || (key == "wakeRetryTasks" && !alarm.optBoolean("wakeReuseDismissTasks", true))))
       for (i in 0 until tasks.length()) {
         val task = tasks.getJSONObject(i)
-        require(task.getString("kind") in listOf("text", "math", "barcode", "breakout", "memory", "maze", "walk", "light")) { "Unknown task" }
+        require(task.getString("kind") in listOf("text", "math", "barcode", "breakout", "memory", "maze", "walk", "light", "photo")) { "Unknown task" }
         if (task.getString("kind") == "breakout" && used) {
           require(task.optInt("gameSeconds", 60) in 5..3600) { "Choose 5–3600 seconds of active play" }
           require(task.optInt("gameIdleSeconds", 20) in 5..120) { "Choose a 5–120 second idle reset" }
@@ -300,6 +300,30 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
       SessionTasks.Result.WRONG -> false
       SessionTasks.Result.NEXT -> { store.sessions(sessions); ring(); true }
       SessionTasks.Result.COMPLETE -> { finish(sessions); true }
+    }
+  }
+
+  private data class PendingPhoto(val sessionId: String, val challengeId: String, val wake: Boolean, val startedAt: Long)
+  // Receipts are transient: a process restart always requires another camera capture.
+  private val pendingPhotos = mutableMapOf<String, PendingPhoto>()
+  fun startPhotoCapture(sessionId: String, challengeId: String, wake: Boolean): String = synchronized(LOCK) {
+    val record = if(wake) wakeChecks.gameRecord(sessionId) else current(store.sessions(), sessionId)
+    check(record.optString("challengeId") == challengeId && record.optString("kind") == "photo") { "This photo task has changed" }
+    pendingPhotos.clear()
+    val token = UUID.randomUUID().toString()
+    pendingPhotos[token] = PendingPhoto(sessionId, challengeId, wake, SystemClock.elapsedRealtime())
+    token
+  }
+  fun cancelPhotoCapture(token: String) = synchronized(LOCK) { pendingPhotos.remove(token); Unit }
+  fun completePhotoCapture(token: String) = synchronized(LOCK) {
+    val request = pendingPhotos.remove(token) ?: error("Take a fresh photo for this round")
+    check(SystemClock.elapsedRealtime() - request.startedAt in 0L..30_000L) { "Photo capture expired. Take another photo." }
+    val sessions = if(request.wake) null else store.sessions()
+    val record = if(request.wake) wakeChecks.gameRecord(request.sessionId) else current(sessions!!, request.sessionId)
+    if(request.wake) wakeChecks.completePhoto(record, request.challengeId)
+    else when(SessionTasks.completePhoto(record, tasks(record), request.challengeId)) {
+      SessionTasks.Result.COMPLETE -> finish(sessions!!)
+      else -> { store.sessions(sessions!!); ring() }
     }
   }
 

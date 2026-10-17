@@ -122,3 +122,11 @@ No physical-device checks have been executed in the cloud environment. Record de
 - With moving dismiss enabled, scroll the task screen, rotate, open the answer keyboard, and change font size. Dismiss must use the current visible viewport instead of scrolling away with page content. Snooze stays smaller and fixed at bottom right; its disabled state still respects snooze limits and an active snooze task. Finish dismiss tasks and confirm the floating Dismiss disappears during that action.
 
 - Turn off Allow snooze, save/reopen, and test with moving dismiss on and off. Only Dismiss should be offered. Dismissal must still require all selected tasks. Let a wake-up check fail: the repeat ring must also have no Snooze. Re-enable snooze and confirm its previous length, limit, and tasks remain. Save/apply a routine with snooze disabled and confirm that choice carries over. Upgrading old alarms/routines must leave snooze enabled.
+
+## 0.13.0 morning stream photo
+
+- Add the task to dismiss, snooze, wake-up confirmation, and custom retry lists. Use two rounds followed by math. Each round must require a new shutter press; cancelling/back or returning from the background must leave progress intact but incomplete. Camera preview in the editor must not change any alarm.
+- Grant/deny Camera, return from app settings, revoke it while open, and contend with another camera app. Show retryable errors without completing tasks. Test on the lock screen, landscape, and large fonts; capture/cancel controls must remain reachable.
+- Enable steady/flashing alarm flashlight, then open/close the photo camera. The service torch must pause while the camera owns it and resume after closing. Alarm audio continues unless muted through the configured solving control.
+- Attempt a screenshot/screen recording during camera preview. It must be blocked. Verify no photo appears in gallery, Files, app cache, or external storage after preview/capture/cancel/error. No image is uploaded; the application has no Internet permission. The app does not recognize image contents.
+- Let a wake-up response deadline pass during capture. The alarm must ring again and a late camera callback must not dismiss it. Rotate, close, or recreate the process during an in-flight capture: another fresh capture is required. Test capture failures/timeouts and retries.

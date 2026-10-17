@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
     if (kind in listOf("exact", "fullScreen")) intent.data = Uri.parse("package:$packageName")
     startActivity(intent)
   }
-  internal fun setBarcodeScanning(active: Boolean) {
+  internal fun setCameraActive(active: Boolean) {
     if (synchronized(AlarmEngine.LOCK) { AlarmStore(this).sessions().isEmpty() }) return
     startForegroundService(Intent(this, RingingService::class.java).putExtra("scannerActive", active))
   }

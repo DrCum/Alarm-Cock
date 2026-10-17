@@ -24,8 +24,9 @@ data class TaskDraft(
     .put("gameSeconds", gameSeconds).put("gameIdleSeconds", gameIdleSeconds)
     .put("stepTarget", stepTarget).put("lightLux", lightLux).put("lightHoldSeconds", lightHoldSeconds)
     .put("controlMode", controlMode).put("fallbackKind", fallbackKind)
-  val name get() = when (kind) { "text" -> "Type random text"; "math" -> "Solve math"; "breakout" -> "Play Breakout"; "memory" -> "Repeat a memory sequence"; "maze" -> "Tilt maze"; "walk" -> "Walk with your phone"; "light" -> "Find bright light"; else -> "Scan a barcode" }
+  val name get() = when (kind) { "photo" -> "Morning stream photo"; "text" -> "Type random text"; "math" -> "Solve math"; "breakout" -> "Play Breakout"; "memory" -> "Repeat a memory sequence"; "maze" -> "Tilt maze"; "walk" -> "Walk with your phone"; "light" -> "Find bright light"; else -> "Scan a barcode" }
   val example get() = when (kind) {
+    "photo" -> "Take a fresh photo of your morning stream or toilet bowl, with your body out of frame"
     "maze" -> "${when(difficulty) { "hard" -> 3; "medium" -> 2; else -> 1 }} wall(s), ${when(difficulty) { "hard" -> "narrow"; "medium" -> "medium"; else -> "wide" }} passages; reach numbered checkpoints and the exit"
     "walk" -> "Walk $stepTarget steps with your phone"
     "light" -> "Stay above $lightLux lux for $lightHoldSeconds seconds"

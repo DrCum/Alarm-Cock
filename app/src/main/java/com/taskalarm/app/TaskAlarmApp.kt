@@ -338,7 +338,7 @@ private fun HomeContent(state: JSONObject?, busy: Boolean, onAdd: () -> Unit, on
   }
 }
 private fun summary(tasks: List<TaskDraft>) = if (tasks.isEmpty()) "No tasks" else tasks.joinToString(" · ") {
-  if (it.kind == "barcode") "Barcode" else "${it.difficulty} ${it.kind}"
+  if (it.kind == "photo") "Morning stream photo" else if (it.kind == "barcode") "Barcode" else "${it.difficulty} ${it.kind}"
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -530,7 +530,7 @@ private fun TaskListEditor(alarm: AlarmDraft, action: String, onChange: (AlarmDr
       onRemove = { onChange(alarm.withTasks(action, alarm.tasks(action).filterNot { it.id == task.id })) }, onEnroll = { onEnroll(action, task.id) })
   }
   if (alarm.tasks(action).size < 10) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-    listOf("text", "math", "barcode", "breakout", "memory", "maze", "walk", "light").forEach { kind -> OutlinedButton(onClick = { onChange(alarm.withTasks(action, alarm.tasks(action) + TaskDraft(kind = kind))) }) { Text("+ ${kind.replaceFirstChar(Char::uppercase)}") } }
+    listOf("text", "math", "barcode", "breakout", "memory", "maze", "walk", "light", "photo").forEach { kind -> OutlinedButton(onClick = { onChange(alarm.withTasks(action, alarm.tasks(action) + TaskDraft(kind = kind))) }) { Text("+ ${if(kind=="photo") "Morning stream photo" else kind.replaceFirstChar(Char::uppercase)}") } }
   }
 }
 
@@ -540,7 +540,7 @@ private fun TaskCard(index: Int, task: TaskDraft, onChange: (TaskDraft) -> Unit,
   CardBlock {
     Text("${index + 1}. ${task.name}", style = MaterialTheme.typography.titleMedium)
     if(task.kind in listOf("maze", "walk", "light")) ExtendedTaskSettings(task,onChange)
-    if (task.kind !in listOf("barcode", "walk", "light")) {
+    if (task.kind !in listOf("barcode", "walk", "light", "photo")) {
       FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("easy", "medium", "hard").forEach { level ->
         FilterChip(task.difficulty == level, { onChange(task.copy(difficulty = level)) }, label = { Text(level.replaceFirstChar(Char::uppercase)) })
       } }
@@ -561,6 +561,8 @@ private fun TaskCard(index: Int, task: TaskDraft, onChange: (TaskDraft) -> Unit,
         Text(task.example, color = MaterialTheme.colorScheme.primary, fontFamily = FontFamily.Monospace, fontSize = 21.sp)
         InfoButton(task.name,when(task.kind) {"text" -> "Case sensitive. A fresh string each round."; "memory" -> "Watch 3, 5, or 7 numbered tiles flash, then tap them in the same order."; else -> "New numbers each round. Enter the answer."})
       }
+    } else if(task.kind == "photo") {
+      PhotoTaskBoard()
     } else if(task.kind == "barcode") {
       FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("any", "specific").forEach { mode ->
         FilterChip(task.barcodeMode == mode, { onChange(task.copy(barcodeMode = mode)) }, label = { Text(if (mode == "any") "Any barcode" else "Specific barcode") })
@@ -630,11 +632,12 @@ private fun ChallengeCard(session: JSONObject, tasks: List<TaskDraft>, prefix: S
   CardBlock {
     val task = tasks[session.getInt("taskIndex")]
     Eyebrow("$prefix · TASK ${session.getInt("taskIndex") + 1}/${tasks.size} · ROUND ${session.getInt("round")}/${task.rounds}")
-    Body(when (kind) { "text" -> "Type the text exactly, including capitals and symbols."; "math" -> "Solve the problem to keep going."; "breakout" -> "Active play completes the task. Points are just for fun."; "memory" -> "Watch the flashes, then repeat their order."; "maze" -> "Guide the ball through the checkpoints."; "walk" -> "Walk with the phone while this task is visible."; "light" -> "Turn on a room light or move to a brighter place."; else -> "Get up and scan a barcode with your camera." })
+    Body(when (kind) { "text" -> "Type the text exactly, including capitals and symbols."; "math" -> "Solve the problem to keep going."; "breakout" -> "Active play completes the task. Points are just for fun."; "memory" -> "Watch the flashes, then repeat their order."; "maze" -> "Guide the ball through the checkpoints."; "walk" -> "Walk with the phone while this task is visible."; "light" -> "Turn on a room light or move to a brighter place."; "photo" -> "Take a fresh photo using the camera."; else -> "Get up and scan a barcode with your camera." })
     Text(session.getString("prompt"), fontFamily = FontFamily.Monospace, fontSize = 25.sp, color = MaterialTheme.colorScheme.primary)
     if (kind == "breakout") BreakoutBoard(session, wake)
     else if (kind in listOf("maze", "walk", "light")) NativeTaskBoard(session,wake)
     else if (kind == "memory") MemoryBoard(session, busy, onSubmit)
+    else if (kind == "photo") PhotoTaskBoard(session, wake)
     else if (kind == "barcode") Primary("Open scanner", !busy, onScan)
     else {
       OutlinedTextField(answer, { answer = it }, label = { Text("Your answer") }, singleLine = true, modifier = Modifier.fillMaxWidth(),

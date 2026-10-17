@@ -170,6 +170,12 @@ internal class WakeChecks(
       else -> put(record)
     }
   }
+  fun completePhoto(record: JSONObject, challengeId: String) {
+    when(SessionTasks.completePhoto(record, record.getJSONObject("alarm").getJSONArray("wakeTasks"), challengeId)) {
+      SessionTasks.Result.COMPLETE -> remove(record)
+      else -> put(record)
+    }
+  }
   fun deadline(id: String) {
     val record = store.checks().find { it.getString("sessionId") == id } ?: return
     if (record.getString("stage") == "retrying" || now() >= record.getLong("deadlineAt")) retry(record)
