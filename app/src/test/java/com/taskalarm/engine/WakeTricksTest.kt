@@ -1,0 +1,183 @@
+package com.taskalarm.engine
+
+import android.app.Application
+import com.taskalarm.app.AlarmDraft
+import com.taskalarm.app.TaskDraft
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
+class WakeTricksTest {
+  private lateinit var engine: AlarmEngine
+  private lateinit var store: AlarmStore
+  private var time = System.currentTimeMillis()
+  @Before fun setup() {
+    val context: Application = RuntimeEnvironment.getApplication()
+    context.getSharedPreferences("task_alarm_v1", 0).edit().clear().commit()
+    engine = AlarmEngine(context) { time }; store = AlarmStore(context)
+  }
+  private fun fire(alarm: AlarmDraft) {
+    engine.save(alarm.json().toString()); time = store.find(alarm.id)!!.getLong("nextAt"); engine.fire(alarm.id)
+  }
+  private fun answer(session: JSONObject) = engine.submit(session.getString("sessionId"), session.getString("challengeId"), session.getString("answer"))
+
+  @Test fun disabledSnoozeCannotStopRingingOrBypassAWakeRetryAfterRecreation() {
+    val alarm = AlarmDraft(days = emptySet(), snoozeEnabled = false, dismissTasks = emptyList(), wakeEnabled = true)
+    fire(alarm)
+    assertFalse(AlarmDraft.from(store.find(alarm.id)!!).snoozeEnabled)
+    val session = store.sessions().single()
+    assertThrows(IllegalStateException::class.java) { engine.begin(session.getString("sessionId"), "snooze") }
+    assertEquals(session.toString(), store.sessions().single().toString())
+    engine.begin(session.getString("sessionId"), "dismiss")
+    val check = store.checks().single(); time = check.getLong("dueAt")
+    engine.wakeEvent(check.getString("sessionId"), "due")
+    engine.respondWake(check.getString("sessionId"), false)
+    engine = AlarmEngine(RuntimeEnvironment.getApplication()) { time }
+    val retry = store.sessions().single()
+    assertFalse(retry.getJSONObject("alarm").getBoolean("snoozeEnabled"))
+    assertThrows(IllegalStateException::class.java) { engine.begin(retry.getString("sessionId"), "snooze") }
+    assertEquals(retry.getString("sessionId"), store.sessions().single().getString("sessionId"))
+  }
+
+  @Test fun snoozeSwitchAppliesToTestsAndLegacyAlarmsKeepSnoozing() {
+    val alarm = AlarmDraft(snoozeEnabled = false, dismissTasks = emptyList())
+    engine.test(alarm.json().toString())
+    val id = store.sessions().single().getString("sessionId")
+    assertThrows(IllegalStateException::class.java) { engine.begin(id, "snooze") }
+    engine.begin(id, "dismiss")
+    val legacy = alarm.json().apply { remove("snoozeEnabled") }
+    assertTrue(AlarmDraft.from(legacy).snoozeEnabled)
+    engine.test(legacy.toString())
+    engine.begin(store.sessions().single().getString("sessionId"), "snooze")
+    assertTrue(store.sessions().isEmpty())
+  }
+
+  @Test fun disablingSnoozeKeepsItsSettingsAndDefersUnusedTaskValidation() {
+    val task = TaskDraft(kind = "barcode", barcodeMode = "specific", barcode = "")
+    val alarm = AlarmDraft(snoozeEnabled = false, snoozeMinutes = 15, maxSnoozes = 2, snoozeTasks = listOf(task))
+    alarm.validate(); engine.save(alarm.json().toString())
+    val saved = AlarmDraft.from(store.find(alarm.id)!!)
+    assertFalse(saved.snoozeEnabled)
+    assertEquals(15, saved.snoozeMinutes); assertEquals(2, saved.maxSnoozes)
+    assertEquals(listOf(task), saved.snoozeTasks)
+    val enabled = saved.copy(snoozeEnabled = true)
+    assertThrows(IllegalArgumentException::class.java) { enabled.validate() }
+    assertThrows(IllegalArgumentException::class.java) { engine.save(enabled.json().toString()) }
+    val enrolled = enabled.copy(snoozeTasks = listOf(task.copy(barcode = "00123")))
+    enrolled.validate(); engine.save(enrolled.json().toString())
+    assertTrue(AlarmDraft.from(store.find(alarm.id)!!).snoozeEnabled)
+  }
+
+  @Test fun memoryLengthsFollowDifficultyAndWrongOrStaleSequencesCannotAdvance() {
+    for ((difficulty, length) in listOf("easy" to 3, "medium" to 5, "hard" to 7)) {
+      val generated = Tasks.generate("memory", difficulty)
+      assertEquals(length, generated.answer.length)
+      assertTrue(generated.answer.all { it in '1'..'4' })
+    }
+    engine.test(AlarmDraft(dismissTasks = listOf(TaskDraft(kind = "memory", rounds = 2))).json().toString())
+    engine.begin(store.sessions().single().getString("sessionId"), "dismiss")
+    val first = store.sessions().single()
+    assertFalse(engine.submit(first.getString("sessionId"), first.getString("challengeId"), "000"))
+    assertEquals(1, store.sessions().single().getInt("round"))
+    assertFalse(JSONObject(engine.state()).getJSONObject("active").has("answer"))
+    assertEquals(first.getString("answer"), (0 until first.getJSONArray("memorySequence").length()).joinToString("") { first.getJSONArray("memorySequence").getInt(it).toString() })
+    answer(first)
+    assertThrows(IllegalStateException::class.java) { answer(first) }
+    assertEquals(2, store.sessions().single().getInt("round"))
+    answer(store.sessions().single())
+    assertTrue(store.sessions().isEmpty())
+  }
+  @Test fun snoozeCountsOnlyAfterItsTasksAndLimitSurvivesWakeUpRetry() {
+    val alarm = AlarmDraft(days = emptySet(), maxSnoozes = 1, dismissTasks = emptyList(), snoozeTasks = listOf(TaskDraft()), wakeEnabled = true)
+    fire(alarm)
+    engine.begin(store.sessions().single().getString("sessionId"), "snooze")
+    assertEquals(0, store.sessions().single().getJSONObject("alarm").getInt("snoozeCount"))
+    answer(store.sessions().single())
+    assertEquals(1, store.find(alarm.id)!!.getInt("snoozeCount"))
+    time = store.find(alarm.id)!!.getLong("nextAt"); engine.fire(alarm.id)
+    val id = store.sessions().single().getString("sessionId")
+    assertThrows(IllegalStateException::class.java) { engine.begin(id, "snooze") }
+    engine.begin(id, "dismiss")
+    val check = store.checks().single(); time = check.getLong("dueAt")
+    engine.wakeEvent(check.getString("sessionId"), "due")
+    engine.respondWake(check.getString("sessionId"), false)
+    val retry = store.sessions().single()
+    assertEquals(1, retry.getJSONObject("alarm").getInt("snoozeCount"))
+    assertThrows(IllegalStateException::class.java) { engine.begin(retry.getString("sessionId"), "snooze") }
+  }
+  @Test fun nextRegularOccurrenceGetsAFreshSnoozeAllowance() {
+    val alarm = AlarmDraft(days = (1..7).toSet(), maxSnoozes = 1, dismissTasks = emptyList())
+    fire(alarm)
+    engine.begin(store.sessions().single().getString("sessionId"), "snooze")
+    time = store.find(alarm.id)!!.getLong("nextAt"); engine.fire(alarm.id)
+    assertEquals(1, store.sessions().single().getJSONObject("alarm").getInt("snoozeCount"))
+    engine.begin(store.sessions().single().getString("sessionId"), "dismiss")
+    time = store.find(alarm.id)!!.getLong("nextAt"); engine.fire(alarm.id)
+    assertEquals(0, store.sessions().single().getJSONObject("alarm").getInt("snoozeCount"))
+    engine.begin(store.sessions().single().getString("sessionId"), "snooze")
+    assertTrue(store.sessions().isEmpty())
+  }
+  @Test fun aRecentMissedSnoozeRecoversWithoutResettingItsCountOrSkippingTheAlarm() {
+    val alarm = AlarmDraft(days = (1..7).toSet(), maxSnoozes = 1, dismissTasks = emptyList())
+    fire(alarm)
+    engine.begin(store.sessions().single().getString("sessionId"), "snooze")
+    time = store.find(alarm.id)!!.getLong("nextAt") + 60_000
+    engine.restore("android.intent.action.BOOT_COMPLETED")
+    val session = store.sessions().single()
+    assertTrue(session.getJSONObject("alarm").optBoolean("snoozed"))
+    assertEquals(1, session.getJSONObject("alarm").getInt("snoozeCount"))
+    assertThrows(IllegalStateException::class.java) { engine.begin(session.getString("sessionId"), "snooze") }
+    engine.begin(session.getString("sessionId"), "dismiss")
+    time = store.find(alarm.id)!!.getLong("nextAt"); engine.fire(alarm.id)
+    assertEquals(0, store.sessions().single().getJSONObject("alarm").getInt("snoozeCount"))
+    engine.begin(store.sessions().single().getString("sessionId"), "snooze")
+    assertTrue(store.sessions().isEmpty())
+  }
+
+  @Test fun shufflingPreservesEveryTaskRoundAndTheSavedConfiguration() {
+    val configured = listOf(TaskDraft(kind = "memory", rounds = 2), TaskDraft(kind = "math"), TaskDraft(kind = "text"))
+    val alarm = AlarmDraft(days = emptySet(), shuffleTasks = true, dismissTasks = configured)
+    fire(alarm)
+    engine.begin(store.sessions().single().getString("sessionId"), "dismiss")
+    val presented = store.sessions().single().getJSONObject("alarm").getJSONArray("dismissTasks")
+    assertEquals(configured.map { it.id }.toSet(), (0 until presented.length()).map { presented.getJSONObject(it).getString("id") }.toSet())
+    var answers = 0
+    while (store.sessions().isNotEmpty()) { answer(store.sessions().single()); answers++ }
+    assertEquals(4, answers)
+    assertEquals(configured.map { it.id }, AlarmDraft.from(store.find(alarm.id)!!).dismissTasks.map { it.id })
+  }
+  @Test fun arrangingTasksUsesCopiesAndNeverMutatesTheSource() {
+    val source = JSONArray(listOf(TaskDraft().json(), TaskDraft(kind = "memory").json()))
+    val arranged = TaskOrder.arrange(source, true)
+    arranged.getJSONObject(0).put("rounds", 9)
+    assertEquals(1, source.getJSONObject(0).getInt("rounds"))
+    assertEquals(1, source.getJSONObject(1).getInt("rounds"))
+  }
+  @Test fun legacySettingsRemainOptionalAndInvalidLimitsFailBeforeRinging() {
+    val legacy = AlarmDraft().json().apply { listOf("maxSnoozes", "shuffleTasks", "vibrate").forEach { remove(it) } }
+    val parsed = AlarmDraft.from(legacy)
+    assertEquals(0, parsed.maxSnoozes); assertFalse(parsed.shuffleTasks); assertFalse(parsed.vibrate)
+    assertThrows(IllegalArgumentException::class.java) { engine.test(AlarmDraft(maxSnoozes = 11).json().toString()) }
+    assertThrows(IllegalArgumentException::class.java) { AlarmDraft(maxSnoozes = -1).validate() }
+    assertTrue(store.sessions().isEmpty())
+  }
+  @Test fun inactiveWakeGameDraftsDoNotBlockSavingButMustBeValidBeforeUse() {
+    val invalidGame = TaskDraft(kind = "breakout", gameSeconds = 0)
+    val draft = AlarmDraft(wakeEnabled = false, wakeMode = "tasks", wakeTasks = listOf(invalidGame), wakeRetryTasks = listOf(invalidGame))
+    draft.validate(); engine.save(draft.json().toString())
+    val enabled = draft.copy(wakeEnabled = true)
+    assertThrows(IllegalArgumentException::class.java) { enabled.validate() }
+    assertThrows(IllegalArgumentException::class.java) { engine.save(enabled.json().toString()) }
+    val yesNo = enabled.copy(wakeMode = "yes_no", wakeReuseDismissTasks = true)
+    yesNo.validate(); engine.save(yesNo.json().toString())
+    assertTrue(store.sessions().isEmpty())
+  }
+}

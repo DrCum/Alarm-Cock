@@ -1,5 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <uses-permission android:name="android.permission.CAMERA" />
+  <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+  <uses-feature android:name="android.hardware.sensor.stepcounter" android:required="false" />
+  <uses-feature android:name="android.hardware.sensor.light" android:required="false" />
+  <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
   <uses-feature android:name="android.hardware.camera.any" android:required="false" />
   <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
   <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
@@ -9,8 +13,10 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
   <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <uses-permission android:name="android.permission.VIBRATE" />
   <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
   <application android:label="Task Alarm" android:icon="@drawable/ic_alarm" android:theme="@style/AppTheme" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:supportsRtl="true">
+    <activity android:name="com.taskalarm.app.BootAlarmActivity" android:exported="false" android:directBootAware="true" android:launchMode="singleTask" />
     <activity android:name="com.taskalarm.app.MainActivity" android:exported="true" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize">
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />
@@ -18,10 +24,13 @@
       </intent-filter>
     </activity>
     <service android:name="com.taskalarm.engine.RingingService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
-    <receiver android:name="com.taskalarm.engine.AlarmReceiver" android:exported="false" />
-    <receiver android:name="com.taskalarm.engine.WakeCheckReceiver" android:exported="false" />
-    <receiver android:name="com.taskalarm.engine.RestoreReceiver" android:exported="false">
+    <service android:name="com.taskalarm.engine.BootRingingService" android:exported="false" android:directBootAware="true" android:foregroundServiceType="mediaPlayback" />
+    <receiver android:name="com.taskalarm.engine.AlarmReceiver" android:exported="false" android:directBootAware="true" />
+    <receiver android:name="com.taskalarm.engine.WakeCheckReceiver" android:exported="false" android:directBootAware="true" />
+    <receiver android:name="com.taskalarm.engine.RingRecoveryReceiver" android:exported="false" android:directBootAware="true" />
+    <receiver android:name="com.taskalarm.engine.RestoreReceiver" android:exported="false" android:directBootAware="true">
       <intent-filter>
+        <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
         <action android:name="android.intent.action.BOOT_COMPLETED" />
         <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
         <action android:name="android.intent.action.TIME_SET" />

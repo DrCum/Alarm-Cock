@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity() {
   private var soundCallback: ((String, String) -> Unit)? = null
   private var soundError: ((String) -> Unit)? = null
   private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+  private val activityPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
   private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
   private val documentPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
     if (uri != null) importSound(uri)
@@ -46,6 +47,9 @@ class MainActivity : ComponentActivity() {
     volumeControlStream = AudioManager.STREAM_ALARM
     updateAlarmWindow()
     setContent { TaskAlarmApp(this) }
+    lifecycleScope.launch(Dispatchers.IO) { runCatching { engine.restore("app_open") }.onFailure {
+      com.taskalarm.engine.BootRecovery(this@MainActivity).event("restore_error", it.javaClass.simpleName)
+    } }
   }
   override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); updateAlarmWindow() }
   override fun onResume() {
@@ -77,21 +81,25 @@ class MainActivity : ComponentActivity() {
   override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean = if (guardVolumeKey(keyCode)) true else super.onKeyDown(keyCode, event)
   override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean = if (guardVolumeKey(keyCode)) true else super.onKeyUp(keyCode, event)
   internal fun openAccess(kind: String) {
+    if (kind == "activity" && Build.VERSION.SDK_INT >= 29) { activityPermission.launch(Manifest.permission.ACTIVITY_RECOGNITION); return }
     if (kind == "camera") { cameraPermission.launch(Manifest.permission.CAMERA); return }
     if (kind in listOf("notifications", "wakeNotifications") && Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
       notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS); return
     }
     val intent = when (kind) {
+      "battery" -> Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
       "appSettings" -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(Uri.parse("package:$packageName"))
       "exact" -> if (Build.VERSION.SDK_INT >= 31) Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM) else return
       "fullScreen" -> if (Build.VERSION.SDK_INT >= 34) Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT) else return
+      "bootNotifications" -> Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName).putExtra(Settings.EXTRA_CHANNEL_ID, com.taskalarm.engine.BootRingingService.CHANNEL)
       "wakeNotifications" -> Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName).putExtra(Settings.EXTRA_CHANNEL_ID, WakeChecks.CHANNEL)
+      "notifications" -> Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName).putExtra(Settings.EXTRA_CHANNEL_ID, RingingService.CHANNEL)
       else -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
     }
     if (kind in listOf("exact", "fullScreen")) intent.data = Uri.parse("package:$packageName")
     startActivity(intent)
   }
-  internal fun setBarcodeScanning(active: Boolean) {
+  internal fun setCameraActive(active: Boolean) {
     if (synchronized(AlarmEngine.LOCK) { AlarmStore(this).sessions().isEmpty() }) return
     startForegroundService(Intent(this, RingingService::class.java).putExtra("scannerActive", active))
   }

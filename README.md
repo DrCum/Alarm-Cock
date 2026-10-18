@@ -12,7 +12,7 @@ A native **Kotlin + Jetpack Compose** alarm clock. Users choose tasks they must 
 - Optional offline peak normalization: decode up to five minutes / 64 MB of PCM to a bounded temporary file, then write a WAV with its peak near −0.17 dBFS. Unsupported/oversized files fail before saving. This does not change system alarm volume; the phone's volume buttons control the alarm stream while the app is open.
 - Test an alarm immediately without scheduling its draft. Test snooze ends the test.
 - Native exact `AlarmManager.setAlarmClock` scheduling, looping foreground-service playback, full-screen alarm notifications, persisted task progress, stale-answer rejection, and a queue for overlapping alarms. A test does not consume a real alarm occurrence.
-- Restoration of schedules after boot, package replacement, and clock/time-zone changes. Reopening the app resumes a persisted ringing session.
+- Restoration after boot, package replacement, and clock/time-zone changes, including bundled alarm audio before first unlock. Recent missed occurrences and persisted ringing sessions recover through exact alarm events.
 
 This is an implementation milestone. There is no attached Android phone or emulator in the cloud environment, so camera, audio, lock-screen behavior, Doze, and reboot behavior require the physical-device checklist before daily use. A successful build does not certify unattended delivery.
 
@@ -28,9 +28,35 @@ Two minutes after dismissal, a notification shows **Wake-up check at [time]** us
 
 The check uses a notification and requests a full-screen pop-up when Android allows it. Choose **Yes / No** or a separate ordered list of confirmation tasks. Yes, or completing every confirmation task before the deadline, ends the cycle. No rings immediately. An unanswered or unfinished check re-rings at its deadline. The repeat alarm reuses the original dismiss tasks by default, or uses custom repeat tasks when configured; snooze tasks stay unchanged. A repeat alarm that is dismissed starts a new check cycle until the user confirms they are up.
 
-Check records, challenge progress, and exact native timers persist across app recreation. The advance reminder, due notification, and re-ring deadline are independently scheduled with AlarmManager, so the UI does not need to be open. Boot restoration re-arms the timers after unlock; overdue retries are delivered through an exact event rather than directly starting a media service from the boot receiver. Times are stored as wall-clock deadlines; manually changing the clock may shorten or extend a check. Editing, disabling, or deleting the source alarm cancels its pending checks. A new regular occurrence supersedes older checks for that alarm.
+Check records, challenge progress, and exact native timers persist across app recreation. The advance reminder, due notification, and re-ring deadline are independently scheduled with AlarmManager, so the UI does not need to be open. Boot restoration re-arms timers before first unlock using a minimal device-protected mirror; tasks require unlock; overdue retries are delivered through an exact event rather than directly starting a media service from the boot receiver. Times are stored as wall-clock deadlines; manually changing the clock may shorten or extend a check. Editing task/settings, disabling, or deleting the source alarm cancels its pending checks. In 0.11.0, changing only schedule exceptions preserves an existing cycle. A new regular occurrence preserves ready or active checks and joins the task queue; only older checks that have not become due are replaced.
 
 Use **Test wake-up check now** to open a check immediately while retaining the configured response deadline. No or timeout starts a test ring; dismissing or snoozing that test ends it without creating another check. The existing **Test sound & tasks now** does not create delayed checks.
+
+## Maximum-volume playlist escalation (0.6.0)
+
+Enable **Escalate unanswered alarms or after two snoozes** per alarm. An unanswered ring escalates after a configurable 1–120 minutes (default two), provided neither Dismiss nor Snooze has been selected. Starting an action’s tasks prevents that unanswered trigger. The next ring after two completed snoozes escalates immediately. A triggered cycle stays escalated through further snoozes and failed wake-up checks; a new regular occurrence resets it.
+
+Escalation requests maximum alarm-stream volume and plays an ordered playlist, switching every **45 seconds** and looping the list. Short clips loop within their slot. Choose 1–12 bundled, phone, or imported tones and reorder them in the editor. **Test escalation now** starts a bounded test immediately without changing the saved alarm or creating wake-up checks. Mute while solving still silences playback; escalation restores the prior alarm volume when ringing stops. Android fixed-volume/DND rules can prevent volume changes.
+
+The foreground service owns the timer and playlist, with a CPU wake lock while this option is active. Trigger and slot timestamps persist using elapsed time and a boot marker, with wall time for reboot recovery. Reopening the app, mute toggles, and service recreation do not restart an escalated slot. An unavailable tone falls back for its slot and rotation continues. Queued alarms capture their starting volume after the previous alarm restores it. Existing alarms keep escalation disabled.
+
+## Additional wake-up tools (0.5.0)
+
+- **Memory tasks:** watch 3, 5, or 7 numbered tiles flash, then repeat their order. Each round generates a new sequence. A replay control is available; returning to the foreground shows the sequence again. These tasks can dismiss, snooze, or confirm a wake-up check.
+- **Snooze limits:** choose unlimited (default) or 1, 2, 3, 5, or 10 snoozes per alarm occurrence. A snooze counts only after all its tasks finish. The count persists through snoozed rings and wake-up retries; the next regular occurrence starts fresh. At the limit, only dismissal tasks can finish the alarm.
+- **Shuffle task order:** optionally reorder each action’s tasks when that action starts, including wake-up confirmation. Every task and round remains required, and the saved configuration stays unchanged.
+- **Vibration:** optionally repeat a vibration pattern while ringing. Sound mute leaves vibration active; dismissal, snooze, session switches, and service teardown clean up the effect. Android may still apply device/DND rules.
+- **Bundled sounds:** Beacon, Pulse, and Chime are original synthesized PCM16 WAV presets. Selection copies a versioned sound into private storage, so playback works offline and retains the chosen version. The source generator is in `scripts/generate-sounds.py`; imported/system sounds and peak normalization remain available.
+
+Existing alarms keep unlimited snoozes, ordered tasks, and vibration off. The compact moving dismiss target now scales with the phone’s font size while staying inside the visible alarm screen.
+
+## Moving dismiss and Breakout (0.4.0)
+
+**Moving dismiss button** is an optional per-alarm setting. A compact button (normally 112 × 48 dp) moves to a random position across the full visible alarm screen every five seconds. Safe system insets and the keyboard stay outside its area. Snooze stays fixed in the bottom-right corner with a smaller target (normally 80 × 36 dp); Dismiss avoids that target. Both scale with font size, and movement pauses in the background. Tapping it starts the existing dismiss tasks; it never skips them. Existing alarms keep the original button unless enabled.
+
+Add **Breakout** to dismiss, snooze, or wake-up confirmation tasks. Set difficulty, active play per round (5–3600 seconds), and idle reset (5–120 seconds, default 20). Difficulty changes paddle width and ball speed. Play time, rather than score, completes each round; balls are unlimited. The native engine credits foreground frames only while paddle movement occurred within the last 2.5 seconds. Holding a stationary finger does not sustain time. Twenty seconds without movement resets the current round by default; leaving the foreground pauses credit and counts toward the idle gap. Progress checkpoints save approximately once per second. App recreation retains recent checkpoints; a long idle gap resets time. Scores and personal bests are kept locally and never unlock an alarm.
+
+Breakout is bundled native content and works offline; a downloadable JavaScript host remains future work. Normal answer submissions cannot complete a game task. The native engine checks challenge IDs, active time, rounds, and subsequent tasks before finishing an alarm.
 
 ## Flashlight alarms (0.3.0)
 
@@ -72,9 +98,11 @@ On the phone, grant Alarms & reminders, alarm notifications, and full-screen ala
 
 ## Current behavior and limits
 
-Times follow the phone's local time zone. Nonexistent spring-forward times move forward by the DST gap. Repeated fall-back times ring only at their first occurrence; once that has passed, the next valid day is selected. Missed alarms are scheduled for the next valid day during restoration. A future snooze keeps its stored timestamp across restoration.
+Times follow the phone's local time zone. Nonexistent spring-forward times move forward by the DST gap. Repeated fall-back times ring only at their first occurrence; once that has passed, the next valid day is selected. Restoration recovers missed occurrences up to 12 hours late instead of silently advancing them to tomorrow. Older missed occurrences move to the next valid time and appear in delivery history. A future alarm or snooze keeps its stored timestamp unless the clock or time zone changes.
 
-Reboot restoration runs after the phone is unlocked; direct-boot alarms are not implemented. An active ringing session is preserved across reboot but does not automatically restart media playback from the boot receiver. Opening the app resumes it. The sticky foreground service is intended to recover ordinary process death; this requires device verification. Android force stop, power-off, revoked permissions, alarm volume zero, and manufacturer power-management rules can prevent delivery.
+Version 0.15.0 registers for `LOCKED_BOOT_COMPLETED` and re-arms exact alarms before first unlock. A separate direct-boot service plays the bundled Beacon tone and offers an unlock screen. Only schedule fields and pending-delivery metadata are mirrored to device-protected storage; task answers, enrolled barcodes, routine definitions, labels, and custom sound paths remain credential-protected. Configured sounds, tasks, and effects resume after unlock. An alarm already delivered before unlock remains pending even beyond the 12-hour catch-up window. Persisted task progress is retained, and recovery clears temporary solving mute. Boot receivers schedule an exact recovery event rather than directly starting a media foreground service. Opening the app also repairs native schedules.
+
+The sticky foreground service is intended to recover ordinary process death, and closing/swiping away the UI does not cancel scheduled alarms. Physical-device verification is required for background and restart behavior. Android **Force stop** cancels scheduled intents and prevents delivery until the user reopens the app; a powered-off phone cannot ring. Revoked permissions, alarm volume zero, DND, and device power-management rules can also prevent delivery. See [Direct Boot](https://developer.android.com/privacy-and-security/direct-boot) and [Android stopped-state behavior](https://developer.android.com/about/versions/15/behavior-changes-all#stopped-state).
 
 Task answers are checked by the native engine against the active session and challenge ID. Camera results are validated as values, not cryptographic proofs of scanning. This is not an anti-tampering system. Alarm definitions and in-flight sessions use a private, versioned SharedPreferences JSON store. Backup is disabled to prevent restoring sessions and private sound paths onto another phone. Unused imported sounds are retained until app data is cleared; library management and cleanup are follow-up work.
 
@@ -82,12 +110,69 @@ There is no backend, downloadable catalog, JavaScript game host, OTA task distri
 
 ## Workspace verification
 
-On 2026-10-16, `:app:assembleDebug`, `:app:testDebugUnitTest`, and `:app:lintDebug` passed. All 46 tests passed, including Robolectric wake-up lifecycle, torch timing/failure, and ringing-service integration tests on API 28. Lint reported zero errors and 17 warnings, including diagnostics for the alarm-lifetime flashlight wake lock; the service releases that lock when paused or stopped. APK signature verification and ZIP integrity checks passed. The standalone universal debug APK is approximately 36 MiB and includes ARM64, ARMv7, x86, and x86_64 native libraries.
+Version 0.15.0 passed `:app:assembleDebug`, `:app:testDebugUnitTest`, and `:app:lintDebug` on 2026-10-18. All 159 tests passed. The 11 new recovery tests cover the minimal mirror, locked receivers without credential-store access, exact timer restoration, pre-unlock delivery and unlock handoff, recent and older missed occurrences, package replacement, retained task progress and mute recovery, wake-check deadlines, the two-minute delivery test, and manifest boundaries. Existing queue, duplicate, task, sensor, editor, scheduling, and audio regressions also pass. Lint reported zero errors and 44 warnings, including synchronous durable preference writes, optional KTX style suggestions, and alarm-lifetime wake-lock diagnostics. APK signing matches previous builds, and ZIP integrity and embedded APK hashes were verified. The standalone universal debug APK is approximately 36 MiB and includes ARM64, ARMv7, x86, and x86_64 native libraries.
 
-The user reported that basic ringing and task dismissal worked in 0.1.0. The volume controls, wake-up checks, advance reminders, and 0.3.0 flashlight modes still require physical-device verification, especially Doze, notification actions, and reboot recovery. The 0.3.0 signing certificate matches 0.2.1, 0.2.0, and 0.1.0 for installation over the existing app.
+The user reported that basic ringing and task dismissal worked in 0.1.0. The volume controls, wake-up checks, advance reminders, flashlight modes, game/button controls, memory playback, vibration, bundled sounds, and escalation still require physical-device verification, especially Doze, notification actions, and reboot recovery. The 0.15.0 signing certificate matches earlier builds for installation over the existing app.
 
 ## Browser download
 
 The current APK is also available through the private [Task Alarm download page](https://task-alarm-download-58b83158.mhorlacher444.chatgpt.site). Sign in with the owning ChatGPT account if prompted. Download the ZIP, extract it with Android Files, then open the APK. The ZIP preserves the original signed APK unchanged.
 
 The download Site source is retained at `/workspace/sites/task-alarm-download`; its `.openai/hosting.json` contains the existing project ID for future updates.
+
+
+### Wake-up expansion (0.11.0)
+
+- Alarm health screen with access/capability checks and a 30-second locked-phone delivery test.
+- Skip next/undo, pause-until, weekday/weekend shortcuts, and next-ring previews.
+- Optional difficulty increase after completed snoozes and randomized wake-up check delays (default range 3–7 minutes).
+- Offline native tilt/touch maze with ordered checkpoints; completion does not depend on score.
+- Walking tasks (default 20 steps) and ambient-light tasks (default 200 lux for 3 seconds), with live demos, permission checks, and configured math/text fallbacks.
+- Reusable local morning routines: save, rename, update, duplicate, review/apply, and delete. Applying keeps the alarm schedule and creates independent task copies.
+
+All new settings preserve existing alarms on upgrade and default off. Walking credit pauses outside the task; light holds restart when backgrounded. Light tasks pause the app's flashlight. Missing sensors/access or no initial light reading within 15 seconds allow the configured fallback; walking/tilt tasks also detect a 15-second interruption in events. A step sensor measures movement and a light sensor measures brightness; neither proves location. Hardware behavior and lock-screen/Doze delivery require physical-device verification. Version 0.15.0 adds bundled audio before first unlock; completing tasks requires unlocking the phone.
+
+Implementation details and acceptance checks: [wake-up features plan](docs/wake-up-features-plan.md).
+
+### Light task fix (0.11.1)
+
+The light threshold accepts any finite lux reading at or above the configured value. Android light sensors report on change, so steady brightness may produce no further events. The hold now uses monotonic foreground time while the latest reading remains above the threshold. The listener stays registered; silence after a valid reading neither resets the timer nor marks the sensor unavailable. Falling below the threshold, leaving the task, or recreating the process resets the hold. An initial on-change value with an older hardware timestamp starts the hold at receipt and cannot backdate completion.
+
+### Compact editor and autosave (0.12.0)
+
+The editor groups controls into collapsible sections. Morning routines stays above Time / days / name; only the latter starts expanded. Pause until is a compact action with Info, and longer explanations open in scrollable Info dialogs.
+
+Valid edits autosave after an 800 ms typing pause. Incomplete or invalid fields leave the last valid alarm in place and show a Not saved status. Done and Android Back flush valid changes before leaving. Exit without saving restores settings from the start of the visit, or removes an alarm created during that visit. Revert restores the visit's opening settings; on a freshly reopened alarm it can restore the previous edit. Recovery history persists locally and stays inside the editor.
+
+Native edit tokens serialize saving and rollback. Closed or superseded editors cannot write, and an alarm that rings/changes independently cannot be rolled back. Edits during a pending snooze retain its exact time/count. Alarm configuration changes keep the established wake-check cancellation behavior; restoring settings does not resurrect an already cancelled check or delivered alarm.
+
+### Folderstorm-inspired theme (0.12.1)
+
+The default theme uses the supplied Folderstorm screenshot as a visual reference: near-black backgrounds, plum panels with fine borders, lavender controls, warm white text, and small gold highlights. Dialogs, task previews, game boards, and the Android startup window share this palette. The memory task retains four distinct tile colors plus numbers, with a gold flash during playback. This is a screenshot-based interpretation, not extracted website CSS.
+
+Info buttons announce their section to screen readers. Autosave retries after alarm access changes, so granting a missing permission can save a waiting valid edit without retyping.
+
+### Full-screen moving dismiss and optional snooze (0.12.2)
+
+Moving Dismiss now uses continuous random positions across the visible alarm screen rather than nine positions in a short panel. When enabled, Snooze is smaller and stays at bottom right. Dismiss avoids the Snooze target, movement pauses in the background, and the layout adapts to the keyboard, rotation, and font size.
+
+In **Snooze settings**, turn off **Allow snooze** to remove Snooze from the ringing screen and block native snooze requests, including test rings and wake-up retries. Existing alarms and routines default to allowing snooze. The saved length, limit, and task list remain intact while disabled; unused task enrollment is validated again before enabling snooze.
+
+### Morning stream photo (0.13.0)
+
+Add **Morning stream photo** to dismiss, snooze, wake-up confirmation, or retry tasks. Each round requires a fresh rear-camera capture of the morning stream or toilet bowl, keeping the body out of frame. This verifies capture, not image contents. The editor includes a camera preview that does not affect alarms. No difficulty setting applies; rounds still work normally.
+
+CameraX captures directly into an in-memory ImageProxy and immediately closes it. No photo files, thumbnails, uploads, or gallery imports are used. The camera dialog blocks screenshots/recording, releases the alarm flashlight, and cancels pending captures on pause/close. Native single-use receipts expire after 30 seconds and are tied to the current session and challenge. Text submissions, stale callbacks, cancelled captures, and late wake-up responses cannot complete photo tasks. Process recreation requires a new capture. Camera permission and a working rear camera are required.
+
+### Overlapping tasks and bulk duplicates (0.14.0)
+
+Ringing alarms and ready wake-up checks now share a durable FIFO display queue. New arrivals keep the current task, challenge, rounds, camera/scanner, and typed answer on screen. A queue banner shows what is waiting; finishing the current item advances to the next. Queued wake checks get their full response window when they reach the front. Active check deadlines still run in the background and can trigger a queued retry. Native alarm sound still starts when an alarm arrives, even while a wake-up check is being completed.
+
+Use **Duplicate…** on an alarm card to create 1–50 additional independent alarms at a chosen minute interval, spanning less than 24 hours. Review the first occurrence dates before creating. Copies retain tasks, sounds, repeat rules, wake-up settings, and enabled state; they receive new alarm/task IDs and no runtime history or skips. Times and weekdays roll across midnight. A first-occurrence boundary prevents a copy after midnight from ringing before its source. Intervals use local clock time, following the app’s existing DST behavior. The original is unchanged. Validation happens before scheduling, the batch saves together, and scheduled copies are cancelled if batch creation fails.
+
+
+### Restart recovery and diagnostics (0.15.0)
+
+After installing, open the app once to prepare the device-protected schedule mirror. In **Alarm health & delivery test**, run **Restart test · ring in 2 minutes**, restart immediately, and leave the phone at its first-unlock screen until it rings. Unlock with the device PIN/pattern/password to complete the alarm. Keep a backup alarm until this passes on the actual phone. The cloud environment has no attached Pixel or emulator; automated checks do not establish delivery on a physical device.
+
+Health shows the phone model, Android/API version, alarm volume, boot count, estimated boot time, schedule preparation, last restore outcome, and a bounded local delivery-event history. This can help distinguish a reboot or blocked scheduling from an alarm that reached audio startup. The Pixel 8 report did not confirm an update or restart; the previous pre-unlock gap was found in code, not proven as the cause of that particular failure.

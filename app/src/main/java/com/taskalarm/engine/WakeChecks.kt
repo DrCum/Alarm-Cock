@@ -22,6 +22,7 @@ internal class WakeChecks(
   private val onRetry: (JSONObject) -> Unit
 ) {
   private val store = AlarmStore(context)
+  private val taskQueue = TaskQueue(context)
   private val alarms = context.getSystemService(AlarmManager::class.java)
   private val notifications = context.getSystemService(NotificationManager::class.java)
   private fun intent(id: String, action: String) = PendingIntent.getBroadcast(context, 0,
@@ -39,9 +40,11 @@ internal class WakeChecks(
     alarms.cancel(intent(id, "reminder")); alarms.cancel(intent(id, "due")); alarms.cancel(intent(id, "deadline"))
     notifications.cancel(notificationId(id))
     store.checks(store.checks().filterNot { it.getString("sessionId") == id })
+    taskQueue.entries(); activateNext()
   }
-  fun cancelForAlarm(alarmId: String, test: Boolean? = null) {
-    store.checks().filter { it.getJSONObject("alarm").getString("id") == alarmId && (test == null || it.optBoolean("test") == test) }.forEach(::remove)
+  fun cancelForAlarm(alarmId: String, test: Boolean? = null, scheduledOnly: Boolean = false) {
+    store.checks().filter { it.getJSONObject("alarm").getString("id") == alarmId && (test == null || it.optBoolean("test") == test) &&
+      (!scheduledOnly || it.getString("stage") == "scheduled") }.forEach(::remove)
   }
   private fun exact(record: JSONObject, phase: String, time: Long) {
     check(Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()) { "Allow Alarms & reminders to use wake-up checks" }
@@ -51,9 +54,9 @@ internal class WakeChecks(
     if (!alarm.optBoolean("wakeEnabled")) return
     check(Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()) { "Restore Alarms & reminders access before dismissing this alarm" }
     val startedAt = now()
-    val dueTime = startedAt + if (test) 0L else alarm.optInt("wakeDelayMinutes", 5) * 60_000L
+    val dueTime = startedAt + if (test) 0L else WakeUpPolicy.delayMs(alarm)
     val record = JSONObject().put("sessionId", UUID.randomUUID().toString()).put("alarm", JSONObject(alarm.toString()))
-      .put("test", test).put("stage", "scheduled").put("dueAt", dueTime).put("reminderAt", startedAt + 120_000L)
+      .put("baseAlarm", JSONObject(alarm.toString())).put("test", test).put("stage", "scheduled").put("dueAt", dueTime).put("reminderAt", startedAt + 120_000L)
       .put("deadlineAt", dueTime + alarm.optInt("wakeResponseMinutes", 5) * 60_000L)
       .put("taskIndex", 0).put("round", 1).put("kind", JSONObject.NULL).put("prompt", JSONObject.NULL)
     // Schedule before removing the previous cycle so a permission failure cannot erase it.
@@ -99,16 +102,53 @@ internal class WakeChecks(
   fun due(id: String) {
     val record = store.checks().find { it.getString("sessionId") == id } ?: return
     if (now() < record.getLong("dueAt")) return
-    if (now() >= record.getLong("deadlineAt")) { retry(record); return }
+    if(record.getString("stage") == "queued") { activateNext(); return }
+    if(record.getString("stage") == "waiting") {
+      if(now() >= record.getLong("deadlineAt")) retry(record) else show(record)
+      return
+    }
+    if(record.getString("stage") != "scheduled") return
+    // An overdue, unblocked check still re-rings; a check blocked by existing work waits its turn.
+    if (now() >= record.getLong("deadlineAt") && taskQueue.head() == null) { retry(record); return }
     alarms.cancel(intent(id, "reminder"))
-    if (record.getString("stage") == "scheduled") {
-      record.put("stage", "waiting")
-      if (record.getJSONObject("alarm").optString("wakeMode", "yes_no") == "tasks") {
-        SessionTasks.start(record, record.getJSONObject("alarm").getJSONArray("wakeTasks"))
-      }
+    val blocked = taskQueue.head() != null
+    record.put("stage", "queued").put("queuedAt", now()).put("deferred", blocked)
+    put(record); taskQueue.entries()
+    alarms.cancel(intent(id, "deadline"))
+    if(taskQueue.isHead("wake", id)) activateNext() else showQueued(record)
+  }
+  fun activateNext() {
+    val head = taskQueue.head()?.takeIf { it.kind == "wake" } ?: return
+    val record = store.checks().find { it.getString("sessionId") == head.sessionId } ?: return
+    if(record.getString("stage") != "queued") return
+    if(Build.VERSION.SDK_INT >= 31 && !alarms.canScheduleExactAlarms()) { showQueued(record); return }
+    if(record.optBoolean("deferred") && !record.has("responseStartedAt")) {
+      record.put("responseStartedAt", now()).put("deadlineAt", now() + record.getJSONObject("alarm").optInt("wakeResponseMinutes", 5) * 60_000L)
+      // Persist the chosen window before scheduling, so an interrupted handoff cannot grant it twice.
       put(record)
     }
-    show(record)
+    val deadline = record.getLong("deadlineAt")
+    if(now() >= deadline) { retry(record); return }
+    // Start the deadline before exposing the task, so background delivery remains native.
+    record.put("deadlineAt", deadline)
+    exact(record, "deadline", deadline)
+    record.put("stage", "waiting")
+    if (!record.has("challengeId") && record.getJSONObject("alarm").optString("wakeMode", "yes_no") == "tasks") {
+      val alarm = record.getJSONObject("alarm")
+      alarm.put("wakeTasks", TaskOrder.arrange(WakeUpPolicy.effective(alarm.getJSONArray("wakeTasks"), alarm), alarm.optBoolean("shuffleTasks")))
+      SessionTasks.start(record, alarm.getJSONArray("wakeTasks"))
+    }
+    put(record); show(record)
+  }
+  private fun showQueued(record: JSONObject) {
+    channel()
+    val notification = NotificationCompat.Builder(context, CHANNEL).setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+      .setContentTitle("Wake-up check queued")
+      .setContentText(if(taskQueue.isHead("wake", record.getString("sessionId"))) "Restore Alarms & reminders access to start this check"
+        else "${record.getJSONObject("alarm").getString("label")} · Finish your current task first")
+      .setCategory(NotificationCompat.CATEGORY_REMINDER).setPriority(NotificationCompat.PRIORITY_DEFAULT)
+      .setOngoing(true).setOnlyAlertOnce(true).setContentIntent(open()).build()
+    notifications.notify(notificationId(record.getString("sessionId")), notification)
   }
   private fun channel() {
     notifications.createNotificationChannel(NotificationChannel(CHANNEL, "Wake-up checks", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -117,6 +157,7 @@ internal class WakeChecks(
     })
   }
   private fun show(record: JSONObject) {
+    if(!taskQueue.isHead("wake", record.getString("sessionId"))) { showQueued(record); return }
     channel()
     val id = record.getString("sessionId")
     val tasks = record.getJSONObject("alarm").optString("wakeMode", "yes_no") == "tasks"
@@ -131,10 +172,10 @@ internal class WakeChecks(
   }
   private fun waiting(id: String): JSONObject {
     val record = store.checks().find { it.getString("sessionId") == id } ?: error("This wake-up check has already finished")
+    check(record.getString("stage") == "waiting") { "This wake-up check is waiting for the current task to finish" }
     if (now() >= record.getLong("deadlineAt")) {
       retry(record); error("The response time ended. Your alarm is ringing again.")
     }
-    check(record.getString("stage") == "waiting") { "This wake-up check is not ready yet" }
     return record
   }
   fun respond(id: String, awake: Boolean) {
@@ -152,8 +193,32 @@ internal class WakeChecks(
       SessionTasks.Result.COMPLETE -> { remove(record); true }
     }
   }
+  fun gameRecord(id: String) = waiting(id).also {
+    check(it.getJSONObject("alarm").optString("wakeMode", "yes_no") == "tasks")
+  }
+  fun saveGame(record: JSONObject) = put(record)
+  fun completeGame(record: JSONObject, challengeId: String) {
+    when (SessionTasks.completeGame(record, record.getJSONObject("alarm").getJSONArray("wakeTasks"), challengeId)) {
+      SessionTasks.Result.COMPLETE -> remove(record)
+      else -> put(record)
+    }
+  }
+  fun completeNative(record: JSONObject, challengeId: String) {
+    when(SessionTasks.completeNative(record,record.getJSONObject("alarm").getJSONArray("wakeTasks"),challengeId)) {
+      SessionTasks.Result.COMPLETE -> remove(record)
+      else -> put(record)
+    }
+  }
+  fun completePhoto(record: JSONObject, challengeId: String) {
+    when(SessionTasks.completePhoto(record, record.getJSONObject("alarm").getJSONArray("wakeTasks"), challengeId)) {
+      SessionTasks.Result.COMPLETE -> remove(record)
+      else -> put(record)
+    }
+  }
   fun deadline(id: String) {
     val record = store.checks().find { it.getString("sessionId") == id } ?: return
+    if(record.getString("stage") == "queued") { activateNext(); return }
+    if(record.getString("stage") == "scheduled" && now() >= record.getLong("dueAt") && taskQueue.head() != null) { due(id); return }
     if (record.getString("stage") == "retrying" || now() >= record.getLong("deadlineAt")) retry(record)
   }
   private fun retry(record: JSONObject) {
@@ -165,23 +230,27 @@ internal class WakeChecks(
   fun reconcile() {
     store.checks().forEach { record ->
       when {
-        record.getString("stage") == "retrying" || now() >= record.getLong("deadlineAt") -> retry(record)
+        record.getString("stage") == "queued" -> Unit
+        record.getString("stage") == "retrying" || now() >= record.getLong("deadlineAt") -> deadline(record.getString("sessionId"))
         record.getString("stage") == "scheduled" && now() >= record.getLong("dueAt") -> due(record.getString("sessionId"))
         record.getString("stage") == "scheduled" && !record.optBoolean("reminderShown") &&
           reminderAt(record)?.let { now() >= it } == true -> remind(record.getString("sessionId"))
       }
     }
+    activateNext()
   }
-  fun visible(): JSONObject? = store.checks().filter { it.getString("stage") == "waiting" }
-    .minByOrNull { it.getLong("deadlineAt") }?.let {
+  fun visible(): JSONObject? = taskQueue.head()?.takeIf { it.kind == "wake" }?.let { head ->
+    store.checks().find { it.getString("sessionId") == head.sessionId && it.getString("stage") in listOf("queued", "waiting") }
+  }?.let {
       JSONObject(it.toString()).apply {
-        remove("answer")
+        remove("answer"); remove("baseAlarm")
         put("totalTasks", getJSONObject("alarm").optJSONArray("wakeTasks")?.length() ?: 0)
       }
     }
   fun restore() {
     if (Build.VERSION.SDK_INT >= 31 && !alarms.canScheduleExactAlarms()) return
     store.checks().forEach { record ->
+      if(record.getString("stage") == "queued") { showQueued(record); return@forEach }
       // Boot receivers cannot start a media FGS directly; an exact user alarm can.
       exact(record, "deadline", maxOf(now() + 1000, record.getLong("deadlineAt")))
       if (record.getString("stage") == "retrying") exact(record, "deadline", now() + 1000)
@@ -194,6 +263,7 @@ internal class WakeChecks(
       }
       else if (now() < record.getLong("deadlineAt")) due(record.getString("sessionId"))
     }
+    taskQueue.entries(); activateNext()
   }
   companion object { const val CHANNEL = "task-alarm-wake-checks-v1" }
 }

@@ -1,8 +1,10 @@
 # Extension and release roadmap
 
+The 0.11.0 test build implements all eight accepted wake-up ideas: alarm health, schedule exceptions, progressive difficulty, randomized checks, a tilt maze, walking and light tasks, and routine presets. See the [detailed implementation plan](wake-up-features-plan.md) for scope, ordering, and acceptance checks. Physical-device verification is still required.
+
 ## 1. Verify and harden Android delivery
 
-Run the physical-device matrix in `device-testing.md`. Add direct-boot storage/scheduling, user-visible delivery diagnostics, accessibility review, sound-library cleanup, and migrations for alarm definitions and active sessions. Preserve scheduled alarms and their task configurations during updates. Define an explicit recovery policy for a lost barcode or unavailable camera before public release.
+Run the physical-device matrix in `device-testing.md`. Version 0.15.0 adds minimal direct-boot storage/scheduling and local delivery diagnostics. Verify pre-unlock audio, unlock handoff, missed-alarm recovery, and background restrictions on supported Android versions. Continue accessibility review, sound-library cleanup, and migrations for alarm definitions and active sessions. Preserve scheduled alarms and their task configurations during updates. Define an explicit recovery policy for a lost barcode or unavailable camera before public release.
 
 Review current target-SDK, exact-alarm, full-screen intent, foreground-service, and Play Console requirements before distribution. Configure production signing and test the signed release binary.
 
@@ -20,7 +22,7 @@ Store installed bundles in app-private persistent storage. Download and verify e
 
 Use a catalog over HTTPS with signed manifests, content hashes, download size limits, runtime compatibility checks, atomic installation, and a last-working-version rollback. No server or signing configuration is present in this milestone. Never hot-reload a running task or replace its assets during an alarm. Downloading or connectivity loss must not block an already configured alarm.
 
-Declarative tasks supported by the installed native engine, compatible game bundles, and sound assets can be candidates for content updates. New Android permissions, task validators, native capabilities, or changes to the Compose application require a new Android binary through the chosen distribution channel. The current native engine recognizes only text, math, and barcode tasks; arbitrary new task kinds cannot be installed into this binary over the air.
+Declarative tasks supported by the installed native engine, compatible game bundles, and sound assets can be candidates for content updates. New Android permissions, task validators, native capabilities, or changes to the Compose application require a new Android binary through the chosen distribution channel. The current native engine recognizes text, math, barcode, memory, and bundled Breakout tasks; arbitrary new task kinds cannot be installed into this binary over the air.
 
 Use trusted, signed first-party JavaScript content initially. Review Google Play's interpreted-code policy and Android WebView security guidance before enabling dynamic content. Do not add self-updating native APK/DEX downloads as a substitute for store updates.
 
@@ -37,3 +39,13 @@ Add a sound preview with a stop control, storage management, normalization progr
 - [Jetpack Compose](https://developer.android.com/compose)
 - [Android WebView security](https://developer.android.com/privacy-and-security/risks/insecure-webview-native-bridges)
 - [Google Play device and network abuse policy](https://support.google.com/googleplay/android-developer/answer/16559646)
+
+## Current expansion ideas
+
+0.4.0 delivers an optional moving dismiss target and offline native Breakout with active-time completion, idle reset, local best scores, and task previews. The first game deliberately stays within the native task engine; it does not require a downloaded game host.
+
+0.5.0 adds a memory-sequence task, optional per-occurrence snooze limits, shuffled task order, vibration, and locally bundled sound presets. Further candidates: optional progressive difficulty after snoozing, walking tasks with sensor capability checks, explicit lost-barcode recovery choices, and signed downloadable content once a server and signing keys are configured. All challenge features should remain optional and preserve a reviewable configuration preview.
+
+0.6.0 adds optional maximum-volume escalation for unanswered alarms or two completed snoozes, with an editable 45-second tone playlist, slot recovery, and volume restoration.
+
+0.11.0 combines the five wake-up milestones: alarm health and delivery test, skip/pause scheduling, progressive difficulty, randomized check timing, native tilt/touch maze, walking and ambient-light tasks with configured fallbacks, and independent local routine presets. See `device-testing.md` for the physical validation matrix.

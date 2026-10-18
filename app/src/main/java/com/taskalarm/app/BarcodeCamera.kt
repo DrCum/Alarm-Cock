@@ -39,17 +39,17 @@ internal fun BarcodeCamera(onRead: (String) -> Unit, onCancel: () -> Unit) {
   val currentRead by rememberUpdatedState(onRead)
   DisposableEffect(owner) {
     val observer = LifecycleEventObserver { _, event ->
-      if (event == Lifecycle.Event.ON_START) (context as? MainActivity)?.setBarcodeScanning(true)
-      if (event == Lifecycle.Event.ON_STOP) (context as? MainActivity)?.setBarcodeScanning(false)
+      if (event == Lifecycle.Event.ON_START) (context as? MainActivity)?.setCameraActive(true)
+      if (event == Lifecycle.Event.ON_STOP) (context as? MainActivity)?.setCameraActive(false)
     }
     owner.lifecycle.addObserver(observer)
-    if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) (context as? MainActivity)?.setBarcodeScanning(true)
+    if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) (context as? MainActivity)?.setCameraActive(true)
     onDispose {
       owner.lifecycle.removeObserver(observer)
       closed.set(true)
       if (provider.isDone) runCatching { provider.get().unbindAll() }
       scanner.close(); executor.shutdown()
-      (context as? MainActivity)?.setBarcodeScanning(false)
+      (context as? MainActivity)?.setCameraActive(false)
     }
   }
   Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
