@@ -21,6 +21,7 @@ import java.time.ZoneId
 
 internal class AlarmEngine(private val context: Context, private val now: () -> Long = System::currentTimeMillis) {
   private val store = AlarmStore(context)
+  private val taskQueue = TaskQueue(context)
   private val manager = context.getSystemService(AlarmManager::class.java)
   private val wakeChecks by lazy { WakeChecks(context, now, ::retryWake) }
   private fun receiver(id: String) = PendingIntent.getBroadcast(context, 0,
@@ -49,7 +50,9 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
   fun state(): String = synchronized(LOCK) {
     // Reconcile missed broadcasts when the application is visible, in addition to native timers.
     wakeChecks.reconcile()
-    val active = store.sessions().firstOrNull()?.let { session ->
+    val queue = taskQueue.entries()
+    val focus = queue.firstOrNull()
+    val active = store.sessions().firstOrNull()?.takeIf { focus?.kind == "alarm" && focus.sessionId == it.getString("sessionId") }?.let { session ->
       JSONObject(session.toString()).apply {
         remove("answer")
         remove("baseAlarm")
@@ -64,6 +67,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
       .put("deliveryTest", JSONObject(context.getSharedPreferences("task_alarm_health", Context.MODE_PRIVATE).getString("delivery", "{}")!!))
       .put("gameStats", GameScores(context).state())
       .put("wakeCheck", wakeChecks.visible() ?: JSONObject.NULL).put("wakeChecks", JSONArray(pending))
+      .put("pendingTasks", JSONArray(queue.drop(1).map { it.json() }))
       .put("readiness", readiness()).toString()
   }
 
@@ -135,6 +139,31 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     if(!scheduleOnly) wakeChecks.cancelForAlarm(alarm.getString("id"))
   }
 
+  fun duplicate(id: String, count: Int, intervalMinutes: Int, expected: String, startAt: Long): String = synchronized(LOCK) {
+    val source = com.taskalarm.app.AlarmDraft.from(store.find(id) ?: error("Alarm no longer exists"))
+    check(source == com.taskalarm.app.AlarmDraft.from(JSONObject(expected))) { "This alarm changed. Reopen Duplicate to review it." }
+    check(startAt > now() + 1000 && next(source.json()) == startAt) { "The starting occurrence changed. Reopen Duplicate to review it." }
+    val copies = AlarmCopies.create(source, count, intervalMinutes, startAt).map { it.json() }
+    val access = readiness()
+    copies.forEach { copy ->
+      validate(copy)
+      if(copy.getBoolean("enabled")) {
+        check(access.getBoolean("exactAlarms") && access.getBoolean("notifications")) { "Allow alarms and notifications first" }
+        check(!copy.optBoolean("wakeEnabled") || access.getBoolean("wakeNotifications")) { "Allow wake-up check notifications first" }
+        checkFlashlightAccess(copy, access)
+        copy.put("nextAt", next(copy))
+      }
+    }
+    try {
+      copies.filter { it.getBoolean("enabled") }.forEach(::schedule)
+      store.putAll(copies)
+    } catch(failure: Exception) {
+      copies.forEach { manager.cancel(receiver(it.getString("id"))) }
+      throw failure
+    }
+    JSONArray(copies).toString()
+  }
+
   fun preview(json: String): Long = next(JSONObject(json))
   fun skipNext(id: String, undo: Boolean = false) = synchronized(LOCK) {
     val alarm = store.find(id) ?: error("Alarm no longer exists")
@@ -188,7 +217,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
   fun fire(id: String) = synchronized(LOCK) {
     val alarm = store.find(id) ?: return@synchronized
     if (!alarm.getBoolean("enabled") || alarm.optLong("nextAt", Long.MAX_VALUE) > now() + 2000) return@synchronized
-    wakeChecks.cancelForAlarm(id)
+    wakeChecks.cancelForAlarm(id, scheduledOnly = true)
     if (alarm.optBoolean("deliveryTest")) {
       deliveryStatus("delivered", alarm.optLong("nextAt"))
       enqueue(alarm, true); store.delete(id); ring(); return@synchronized
@@ -240,9 +269,10 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
       val volume = audio.getStreamVolume(AudioManager.STREAM_ALARM)
       sessions.add(JSONObject().put("sessionId", UUID.randomUUID().toString()).put("alarm", alarm).put("baseAlarm", occurrence)
         .put("wakeRetry", wakeRetry).put("action", JSONObject.NULL).put("taskIndex", 0).put("round", 1).put("prompt", JSONObject.NULL)
-        .put("kind", JSONObject.NULL).put("test", test).put("muted", false).put("originalVolume", volume)
+        .put("kind", JSONObject.NULL).put("test", test).put("queuedAt", now()).put("muted", false).put("originalVolume", volume)
         .put("guardVolume", VolumePolicy.guardedLevel(volume, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM))))
       store.sessions(sessions)
+      taskQueue.entries()
     }
   }
   private fun retryWake(record: JSONObject) {
@@ -444,6 +474,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
       } else wakeChecks.schedule(base)
     }
     sessions.removeAt(0); store.sessions(sessions)
+    taskQueue.entries(); wakeChecks.activateNext()
     if (sessions.isEmpty()) context.stopService(Intent(context, RingingService::class.java)) else ring()
   }
 

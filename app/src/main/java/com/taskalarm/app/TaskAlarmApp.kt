@@ -53,6 +53,7 @@ internal fun TaskAlarmApp(activity: MainActivity) {
     var scanAction by remember { mutableStateOf<((String) -> Unit)?>(null) }
     var health by rememberSaveable { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<AlarmDraft?>(null) }
+    var duplicateTarget by remember { mutableStateOf<AlarmDraft?>(null) }
     val scope = rememberCoroutineScope()
     suspend fun refresh() {
       state = withContext(Dispatchers.IO) { JSONObject(activity.engine.state()) }
@@ -79,7 +80,11 @@ internal fun TaskAlarmApp(activity: MainActivity) {
     val wakeCheck = state?.optJSONObject("wakeCheck")
     val draftToken = editToken
     val draft = draftJson?.let { AlarmDraft.from(JSONObject(it)) }
-    LaunchedEffect(active?.optString("sessionId"), wakeCheck?.optString("sessionId")) { scanAction = null }
+    val focusKey = active?.optString("sessionId") ?: wakeCheck?.optString("sessionId")
+    LaunchedEffect(focusKey, active?.optString("challengeId") ?: wakeCheck?.optString("challengeId")) {
+      scanAction = null
+      if(focusKey != null) { duplicateTarget = null; deleteTarget = null }
+    }
     fun submit(session: JSONObject, check: Boolean, answer: String) {
       work {
         val correct = withContext(Dispatchers.IO) {
@@ -181,6 +186,8 @@ internal fun TaskAlarmApp(activity: MainActivity) {
     }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
       Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+        TaskQueueStatus(state?.optJSONArray("pendingTasks"))
+        Box(Modifier.weight(1f)) { key(focusKey) {
         when {
           scanAction != null -> BarcodeCamera(onRead = { value -> val action = scanAction; scanAction = null; action?.invoke(value) }, onCancel = { scanAction = null })
           active != null -> RingingContent(active, busy, onAction = { action ->
@@ -228,12 +235,18 @@ internal fun TaskAlarmApp(activity: MainActivity) {
             onHealth = { health = true }, onSkip = { alarm, undo -> work { withContext(Dispatchers.IO) { activity.engine.skipNext(alarm.id,undo) } } },
             onAdd = { openEditor(AlarmDraft()) }, onEdit = { openEditor(it) },
             onToggle = { alarm, enabled -> work { withContext(Dispatchers.IO) { activity.engine.save(alarm.copy(enabled = enabled).json().toString()) } } },
-            onDelete = { deleteTarget = it },
+            onDelete = { deleteTarget = it }, onDuplicate = { duplicateTarget = it },
             onTest = { alarm -> work { withContext(Dispatchers.IO) { activity.engine.test(alarm.json().toString()) } } },
             onAccess = { kind -> try { activity.openAccess(kind) } catch (failure: Exception) { error = failure.message } })
         }
+        } }
       }
     }
+    duplicateTarget?.let { target -> DuplicateAlarmDialog(activity, target, busy,
+      onClose = { duplicateTarget = null }, onCreate = { count, interval, startAt -> work {
+        withContext(Dispatchers.IO) { activity.engine.duplicate(target.id, count, interval, target.json().toString(), startAt) }
+        duplicateTarget = null
+      } }) }
     error?.let { message -> AlertDialog(onDismissRequest = { error = null }, title = { Text("Check this alarm") }, text = { Text(message) },
       confirmButton = { TextButton(onClick = { error = null }) { Text("OK") } }) }
     deleteTarget?.let { target -> AlertDialog(onDismissRequest = { deleteTarget = null }, title = { Text("Delete alarm?") },
@@ -282,7 +295,7 @@ private fun AccessCard(readiness: JSONObject?, onAccess: (String) -> Unit) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HomeContent(state: JSONObject?, busy: Boolean, onAdd: () -> Unit, onEdit: (AlarmDraft) -> Unit,
-  onHealth: () -> Unit, onSkip: (AlarmDraft, Boolean) -> Unit, onToggle: (AlarmDraft, Boolean) -> Unit, onDelete: (AlarmDraft) -> Unit, onTest: (AlarmDraft) -> Unit, onAccess: (String) -> Unit) {
+  onHealth: () -> Unit, onSkip: (AlarmDraft, Boolean) -> Unit, onToggle: (AlarmDraft, Boolean) -> Unit, onDelete: (AlarmDraft) -> Unit, onDuplicate: (AlarmDraft) -> Unit, onTest: (AlarmDraft) -> Unit, onAccess: (String) -> Unit) {
   Page {
     Spacer(Modifier.height(10.dp)); Eyebrow("TASK ALARM")
     Text("A better start.", style = MaterialTheme.typography.headlineLarge)
@@ -326,6 +339,7 @@ private fun HomeContent(state: JSONObject?, busy: Boolean, onAdd: () -> Unit, on
           if((alarm.skipDate.isNotEmpty() && alarm.skipDate >= java.time.LocalDate.now().toString()) || alarm.skipAt > System.currentTimeMillis() || alarm.skipOneTime) TextButton(enabled = !busy, onClick = { onSkip(alarm,true) }) { Text("Undo skip") }
           else if(alarm.enabled) TextButton(enabled = !busy, onClick = { onSkip(alarm,false) }) { Text("Skip next") }
           TextButton(enabled = !busy, onClick = { onEdit(alarm) }) { Text("Edit") }
+          TextButton(enabled = !busy, onClick = { onDuplicate(alarm) }) { Text("Duplicate…") }
           TextButton(enabled = !busy, onClick = { onTest(alarm) }) { Text("Test now") }
           TextButton(enabled = !busy, onClick = { onDelete(alarm) }) { Text("Delete") }
         }
@@ -628,7 +642,7 @@ private fun RingingContent(active: JSONObject, busy: Boolean, onAction: (String)
 @Composable
 private fun ChallengeCard(session: JSONObject, tasks: List<TaskDraft>, prefix: String, busy: Boolean, onSubmit: (String) -> Unit, onScan: () -> Unit, wake: Boolean = false) {
   val kind = session.optString("kind")
-  var answer by remember(session.optString("challengeId")) { mutableStateOf("") }
+  var answer by rememberSaveable(session.optString("challengeId")) { mutableStateOf("") }
   CardBlock {
     val task = tasks[session.getInt("taskIndex")]
     Eyebrow("$prefix · TASK ${session.getInt("taskIndex") + 1}/${tasks.size} · ROUND ${session.getInt("round")}/${task.rounds}")
@@ -650,6 +664,15 @@ private fun ChallengeCard(session: JSONObject, tasks: List<TaskDraft>, prefix: S
 
 @Composable
 private fun WakeCheckContent(check: JSONObject, busy: Boolean, onReply: (Boolean) -> Unit, onSubmit: (String) -> Unit, onScan: () -> Unit) {
+  if(check.optString("stage") == "queued") {
+    val activity = androidx.activity.compose.LocalActivity.current as? MainActivity
+    Page {
+      Text("Wake-up check waiting", style = MaterialTheme.typography.headlineLarge)
+      Body("Restore Alarms & reminders access to start the response timer and task.")
+      Secondary("Allow alarms & reminders", activity != null) { activity?.openAccess("exact") }
+    }
+    return
+  }
   val alarm = AlarmDraft.from(check.getJSONObject("alarm"))
   val remaining = ((check.getLong("deadlineAt") - System.currentTimeMillis() + 999) / 1000).coerceAtLeast(0)
   Page {
