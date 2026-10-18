@@ -96,7 +96,8 @@ class RingingService : Service() {
     val serviceType = if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else 0
     ServiceCompat.startForeground(this, 1001, notification, serviceType)
     if (intent?.hasExtra("scannerActive") == true) scannerActive = intent.getBooleanExtra("scannerActive", false)
-    if (sessionId != session.getString("sessionId")) {
+    val newSession = sessionId != session.getString("sessionId")
+    if (newSession) {
       releaseFlashlight()
       vibration.stop()
       releaseAudio(); sessionId = session.getString("sessionId")
@@ -127,6 +128,8 @@ class RingingService : Service() {
     }
     flashlight.update(flashlightMode, scannerActive || measuringLight)
     vibration.update(alarm.optBoolean("vibrate"))
+    BootRecovery(this).stopBootAudio()
+    if(newSession) BootRecovery(this).event("audio_started", "Normal alarm playback service started", alarm.getString("id"))
     return START_STICKY
   }
 

@@ -5,6 +5,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal class AlarmStore(context: Context) {
+  private val boot = BootRecovery(context)
   private val prefs = context.getSharedPreferences("task_alarm_v1", Context.MODE_PRIVATE)
   fun alarms(): List<JSONObject> {
     val array = JSONArray(prefs.getString("alarms", "[]"))
@@ -20,6 +21,7 @@ internal class AlarmStore(context: Context) {
   fun delete(id: String) = write(alarms().filterNot { it.getString("id") == id })
   private fun write(alarms: List<JSONObject>) {
     check(prefs.edit().putString("alarms", JSONArray(alarms).toString()).commit()) { "Unable to save alarms" }
+    boot.sync()
   }
   fun sessions(): MutableList<JSONObject> {
     val array = JSONArray(prefs.getString("sessions", "[]"))
@@ -27,6 +29,7 @@ internal class AlarmStore(context: Context) {
   }
   fun sessions(value: List<JSONObject>) {
     check(prefs.edit().putString("sessions", JSONArray(value).toString()).commit()) { "Unable to save task progress" }
+    boot.sync()
   }
   fun checks(): MutableList<JSONObject> {
     val array = JSONArray(prefs.getString("wake_checks", "[]"))
@@ -34,6 +37,7 @@ internal class AlarmStore(context: Context) {
   }
   fun checks(value: List<JSONObject>) {
     check(prefs.edit().putString("wake_checks", JSONArray(value).toString()).commit()) { "Unable to save wake-up checks" }
+    boot.sync()
   }
   fun taskOrder(): List<String> {
     val array = JSONArray(prefs.getString("task_order", "[]"))

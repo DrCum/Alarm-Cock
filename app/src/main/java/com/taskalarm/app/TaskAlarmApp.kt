@@ -199,7 +199,7 @@ internal fun TaskAlarmApp(activity: MainActivity) {
             onSubmit = { submit(wakeCheck, true, it) }, onScan = { scanAction = { submit(wakeCheck, true, it) } })
           health -> HealthScreen(state, onBack = { health = false },
             onAccess = { try { activity.openAccess(it) } catch(failure: Exception) { error = failure.message } },
-            onTest = { work { withContext(Dispatchers.IO) { activity.engine.testDelivery() } } })
+            onTest = { seconds -> work { withContext(Dispatchers.IO) { activity.engine.testDelivery(seconds) } } })
           draft != null -> AlarmEditorContent(draft, state?.optJSONObject("readiness"), busy || editorClosing,
             onChange = { if (!busy && !editorClosing) draftJson = it.json().toString() },
             saveStatus=if(editorClosing) "Updating…" else if(editorSaving) "Saving…" else saveNotice, canRevert=canRevertSaved || draftJson!=openingJson,

@@ -47,6 +47,9 @@ class MainActivity : ComponentActivity() {
     volumeControlStream = AudioManager.STREAM_ALARM
     updateAlarmWindow()
     setContent { TaskAlarmApp(this) }
+    lifecycleScope.launch(Dispatchers.IO) { runCatching { engine.restore("app_open") }.onFailure {
+      com.taskalarm.engine.BootRecovery(this@MainActivity).event("restore_error", it.javaClass.simpleName)
+    } }
   }
   override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); updateAlarmWindow() }
   override fun onResume() {
@@ -88,6 +91,7 @@ class MainActivity : ComponentActivity() {
       "appSettings" -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(Uri.parse("package:$packageName"))
       "exact" -> if (Build.VERSION.SDK_INT >= 31) Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM) else return
       "fullScreen" -> if (Build.VERSION.SDK_INT >= 34) Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT) else return
+      "bootNotifications" -> Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName).putExtra(Settings.EXTRA_CHANNEL_ID, com.taskalarm.engine.BootRingingService.CHANNEL)
       "wakeNotifications" -> Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName).putExtra(Settings.EXTRA_CHANNEL_ID, WakeChecks.CHANNEL)
       "notifications" -> Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName).putExtra(Settings.EXTRA_CHANNEL_ID, RingingService.CHANNEL)
       else -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)

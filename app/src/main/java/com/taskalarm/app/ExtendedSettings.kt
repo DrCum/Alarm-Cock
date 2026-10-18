@@ -15,17 +15,43 @@ import java.util.Calendar
 import java.util.Date
 
 @Composable
-internal fun HealthScreen(state: JSONObject?, onBack: () -> Unit, onAccess: (String) -> Unit, onTest: () -> Unit) {
+internal fun HealthScreen(state: JSONObject?, onBack: () -> Unit, onAccess: (String) -> Unit, onTest: (Int) -> Unit) {
   Page {
     Secondary("← Alarms", onClick = onBack)
     Text("Alarm health", style = MaterialTheme.typography.headlineLarge)
     val ready = state?.optJSONObject("readiness")
     listOf(Triple("exactAlarms","Exact alarms","exact"),Triple("notifications","Alarm notifications","notifications"),
       Triple("wakeNotifications","Wake-up notifications","wakeNotifications"),Triple("fullScreen","Full-screen alarms","fullScreen"),
+      Triple("bootNotifications","Restart alarm notifications","bootNotifications"),
       Triple("batteryUnrestricted","Battery unrestricted","battery")).forEach { (key,label,access) ->
       CardBlock {
         Text("$label · ${if(ready?.optBoolean(key) == true) "Ready" else "Check settings"}")
         Secondary("Open $label settings") { onAccess(access) }
+      }
+    }
+    state?.optJSONObject("recovery")?.let { recovery ->
+      CardBlock {
+        Text("Restart & delivery history", style = MaterialTheme.typography.titleMedium)
+        Body("${ready?.optString("device")} · Android ${ready?.optString("androidVersion")} (API ${ready?.optInt("sdk")})")
+        Body("Alarm volume: ${ready?.optInt("alarmVolume")} / ${ready?.optInt("alarmVolumeMax")}")
+        if(ready?.optInt("alarmVolume") == 0) Body("The phone's alarm volume is silent. Raise it before testing.")
+        Body("Boot-ready schedule: ${if(recovery.optBoolean("prepared")) "Prepared" else "Open and save your alarms first"}")
+        Body("Current boot count: ${recovery.optInt("bootCount")}")
+        Body("Approximate last system boot: ${DateFormat.getDateTimeInstance().format(Date(recovery.optLong("bootedAt")))}")
+        recovery.optJSONObject("lastRestore")?.takeIf { it.has("at") }?.let { restore ->
+          Body("Last recovery: ${DateFormat.getDateTimeInstance().format(Date(restore.getLong("at")))} · ${restore.optString("action")}")
+          Body("${restore.optInt("scheduled")} scheduled · ${restore.optInt("recovered")} recovered · ${restore.optInt("skipped")} older missed occurrences")
+          if(restore.optBoolean("blocked")) Body("Recovery was blocked by missing Alarms & reminders access.")
+        }
+        InfoButton("Before first unlock", "A minimal schedule copy is available after a restart, before your PIN or password is entered. A bundled alarm tone plays until you unlock and complete your normal tasks. Task answers, barcodes, routines, and custom files remain credential-protected. Recent missed alarms recover within 12 hours; an alarm already triggered before unlock stays pending until handed off. Ordinary app closing does not cancel Android alarms. Power-off and Android Force stop can prevent delivery; reopening this app repairs its schedules.")
+        var historyOpen by remember { mutableStateOf(false) }
+        TextButton(onClick = { historyOpen = !historyOpen }) { Text(if(historyOpen) "Hide delivery events" else "Show delivery events") }
+        if(historyOpen) recovery.optJSONArray("events")?.let { events ->
+          for(index in events.length() - 1 downTo 0) {
+            val event = events.getJSONObject(index)
+            Body("${DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.MEDIUM).format(Date(event.getLong("at")))} · ${event.getString("type")} · ${event.optString("detail")}")
+          }
+        }
       }
     }
     CardBlock {
@@ -52,13 +78,15 @@ internal fun HealthScreen(state: JSONObject?, onBack: () -> Unit, onAccess: (Str
     CardBlock {
       Text("Locked-phone delivery test",style=MaterialTheme.typography.titleMedium)
       Body("Schedule a test in 30 seconds, then lock your phone. Dismiss it to record acknowledgement. This does not change your normal alarms or create follow-up checks.")
-      Primary("Schedule delivery test", onClick = onTest)
+      Primary("Schedule delivery test") { onTest(30) }
+      Secondary("Restart test · ring in 2 minutes") { onTest(120) }
+      InfoButton("Restart test", "Schedule this test, restart your phone, and leave it at the first-unlock screen. The bundled tone should sound at the scheduled time. Unlock and dismiss the test to record acknowledgement. Start with an audible alarm volume; the 2-minute test needs enough time for your phone to reboot.")
       val test = state?.optJSONObject("deliveryTest")
       if(test?.has("status") == true) {
         Body("Last test: ${test.optString("status")} · ${DateFormat.getDateTimeInstance().format(Date(test.optLong("updatedAt")))}")
         if(test.optString("status") == "scheduled" && test.optLong("scheduledAt") < System.currentTimeMillis()) Body("Scheduled time has passed; delivery has not been recorded.")
       }
-      Body("A successful test confirms that delivery worked at that time. Battery rules and permissions can change. Alarms before the first unlock after reboot are not supported yet. Power-off and Android Force stop prevent delivery.")
+      Body("A successful test confirms delivery at that time. Check this phone's restart test before relying on the new pre-unlock path. Battery rules and permissions can change; power-off and Android Force stop can prevent delivery.")
     }
   }
 }

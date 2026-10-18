@@ -125,20 +125,23 @@ class WakeTricksTest {
     engine.begin(store.sessions().single().getString("sessionId"), "snooze")
     assertTrue(store.sessions().isEmpty())
   }
-  @Test fun restoringPastAMissedSnoozeResetsTheNextRegularOccurrencesAllowance() {
+  @Test fun aRecentMissedSnoozeRecoversWithoutResettingItsCountOrSkippingTheAlarm() {
     val alarm = AlarmDraft(days = (1..7).toSet(), maxSnoozes = 1, dismissTasks = emptyList())
     fire(alarm)
     engine.begin(store.sessions().single().getString("sessionId"), "snooze")
     time = store.find(alarm.id)!!.getLong("nextAt") + 60_000
     engine.restore("android.intent.action.BOOT_COMPLETED")
-    val recovered = store.find(alarm.id)!!
-    assertFalse(recovered.optBoolean("snoozed"))
-    assertFalse(recovered.optBoolean("wakeRetry"))
-    assertEquals(0, recovered.getInt("snoozeCount"))
-    time = recovered.getLong("nextAt"); engine.fire(alarm.id)
+    val session = store.sessions().single()
+    assertTrue(session.getJSONObject("alarm").optBoolean("snoozed"))
+    assertEquals(1, session.getJSONObject("alarm").getInt("snoozeCount"))
+    assertThrows(IllegalStateException::class.java) { engine.begin(session.getString("sessionId"), "snooze") }
+    engine.begin(session.getString("sessionId"), "dismiss")
+    time = store.find(alarm.id)!!.getLong("nextAt"); engine.fire(alarm.id)
+    assertEquals(0, store.sessions().single().getJSONObject("alarm").getInt("snoozeCount"))
     engine.begin(store.sessions().single().getString("sessionId"), "snooze")
     assertTrue(store.sessions().isEmpty())
   }
+
   @Test fun shufflingPreservesEveryTaskRoundAndTheSavedConfiguration() {
     val configured = listOf(TaskDraft(kind = "memory", rounds = 2), TaskDraft(kind = "math"), TaskDraft(kind = "text"))
     val alarm = AlarmDraft(days = emptySet(), shuffleTasks = true, dismissTasks = configured)

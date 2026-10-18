@@ -22,6 +22,7 @@ import java.time.ZoneId
 internal class AlarmEngine(private val context: Context, private val now: () -> Long = System::currentTimeMillis) {
   private val store = AlarmStore(context)
   private val taskQueue = TaskQueue(context)
+  private val boot = BootRecovery(context, now)
   private val manager = context.getSystemService(AlarmManager::class.java)
   private val wakeChecks by lazy { WakeChecks(context, now, ::retryWake) }
   private fun receiver(id: String) = PendingIntent.getBroadcast(context, 0,
@@ -45,6 +46,10 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
       .put("fullScreen", Build.VERSION.SDK_INT < 34 || nm.canUseFullScreenIntent())
       .put("flashlightAvailable", context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_FLASH))
       .put("cameraPermission", context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+      .put("bootNotifications", enabled && channelEnabled(BootRingingService.CHANNEL))
+      .put("alarmVolume", context.getSystemService(AudioManager::class.java).getStreamVolume(AudioManager.STREAM_ALARM))
+      .put("alarmVolumeMax", context.getSystemService(AudioManager::class.java).getStreamMaxVolume(AudioManager.STREAM_ALARM))
+      .put("device", "${Build.MANUFACTURER} ${Build.MODEL}").put("androidVersion", Build.VERSION.RELEASE).put("sdk", Build.VERSION.SDK_INT)
   }
 
   fun state(): String = synchronized(LOCK) {
@@ -68,6 +73,7 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
       .put("gameStats", GameScores(context).state())
       .put("wakeCheck", wakeChecks.visible() ?: JSONObject.NULL).put("wakeChecks", JSONArray(pending))
       .put("pendingTasks", JSONArray(queue.drop(1).map { it.json() }))
+      .put("recovery", boot.summary())
       .put("readiness", readiness()).toString()
   }
 
@@ -188,12 +194,13 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
     context.getSharedPreferences("task_alarm_health", Context.MODE_PRIVATE).edit()
       .putString("delivery", JSONObject().put("status", status).put("scheduledAt", at).put("updatedAt", now()).toString()).commit()
   }
-  fun testDelivery() = synchronized(LOCK) {
+  fun testDelivery(delaySeconds: Int = 30) = synchronized(LOCK) {
+    require(delaySeconds in listOf(30, 120))
     check(readiness().getBoolean("exactAlarms") && readiness().getBoolean("notifications")) { "Allow alarms and notifications first" }
     val old = store.alarms().filter { it.optBoolean("deliveryTest") }
     old.forEach { manager.cancel(receiver(it.getString("id"))); store.delete(it.getString("id")) }
     val alarm = com.taskalarm.app.AlarmDraft(label = "Alarm delivery test", days = emptySet(), dismissTasks = emptyList()).json()
-      .put("deliveryTest", true).put("nextAt", now() + 30_000)
+      .put("deliveryTest", true).put("nextAt", now() + delaySeconds * 1000L)
     schedule(alarm); store.put(alarm); deliveryStatus("scheduled", alarm.getLong("nextAt"))
   }
 
@@ -214,15 +221,16 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
   fun launchIntent(): Intent = context.packageManager.getLaunchIntentForPackage(context.packageName)!!
     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
 
-  fun fire(id: String) = synchronized(LOCK) {
+  fun fire(id: String, startService: Boolean = true) = synchronized(LOCK) {
     val alarm = store.find(id) ?: return@synchronized
     if (!alarm.getBoolean("enabled") || alarm.optLong("nextAt", Long.MAX_VALUE) > now() + 2000) return@synchronized
+    boot.event(if(startService) "alarm_received" else "alarm_recovered", if(startService) "Scheduled alarm receiver ran" else "Overdue alarm recovered without skipping its occurrence", id)
     wakeChecks.cancelForAlarm(id, scheduledOnly = true)
     if (alarm.optBoolean("deliveryTest")) {
-      deliveryStatus("delivered", alarm.optLong("nextAt"))
-      enqueue(alarm, true); store.delete(id); ring(); return@synchronized
+      deliveryStatus(if(startService) "delivered" else "recovered", alarm.optLong("nextAt"))
+      enqueue(alarm, true); store.delete(id); if(startService) ring(); return@synchronized
     }
-    enqueue(alarm, false, alarm.optBoolean("wakeRetry")); ring()
+    enqueue(alarm, false, alarm.optBoolean("wakeRetry")); if(startService) ring()
     alarm.remove("snoozed"); alarm.remove("wakeRetry")
     if (alarm.getJSONArray("days").length() > 0) { alarm.put("nextAt", next(alarm)); schedule(alarm) }
     else { alarm.put("enabled", false); alarm.remove("nextAt") }
@@ -479,22 +487,41 @@ internal class AlarmEngine(private val context: Context, private val now: () -> 
   }
 
   fun restore(action: String?) = synchronized(LOCK) {
-    if (!readiness().getBoolean("exactAlarms")) return@synchronized
+    boot.sync()
+    if (!readiness().getBoolean("exactAlarms")) { boot.restored(action, 0, 0, 0, true); return@synchronized }
+    val clockChanged = action in listOf(Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED)
+    var scheduled = 0; var recovered = 0; var skipped = 0
     for (alarm in store.alarms().filter { it.getBoolean("enabled") }) {
-      if (alarm.optBoolean("deliveryTest")) {
-        if (alarm.optLong("nextAt") > now()) schedule(alarm) else { store.delete(alarm.getString("id")); deliveryStatus("not observed", alarm.optLong("nextAt")) }
-        continue
-      }
-      val missedSnooze = alarm.optBoolean("snoozed") && alarm.optLong("nextAt") <= now()
-      if (!alarm.optBoolean("snoozed") || missedSnooze) {
-        alarm.put("nextAt", next(alarm))
-        if (missedSnooze) {
-          alarm.remove("snoozed"); alarm.remove("wakeRetry"); alarm.remove("escalationLatched"); alarm.put("snoozeCount", 0)
+      val due = alarm.optLong("nextAt")
+      val recent = due > 0 && due <= now() && now() - due <= BootRecovery.CATCH_UP_MS
+      if(!clockChanged && due > 0 && due <= now() && (recent || boot.wasTriggered(alarm.getString("id")))) {
+        // Exact-alarm delivery, not the boot broadcast, starts the media foreground service.
+        fire(alarm.getString("id"), startService = false)
+        recovered++
+      } else if(alarm.optBoolean("deliveryTest")) {
+        if(due > now()) { schedule(alarm); scheduled++ }
+        else { store.delete(alarm.getString("id")); deliveryStatus("not observed", due); skipped++ }
+      } else {
+        if(clockChanged || due <= 0 || due <= now()) {
+          if(due > 0 && due <= now()) { skipped++; boot.event("missed_too_old", "Missed occurrence was outside the 12-hour catch-up window", alarm.getString("id")) }
+          if(alarm.optBoolean("snoozed")) {
+            alarm.remove("snoozed"); alarm.remove("wakeRetry"); alarm.remove("escalationLatched"); alarm.put("snoozeCount", 0)
+          }
+          alarm.put("nextAt", next(alarm)); store.put(alarm)
         }
+        schedule(alarm); scheduled++
       }
-      schedule(alarm); store.put(alarm)
     }
+    if(store.sessions().isNotEmpty()) { boot.scheduleResume(); recovered++ }
     wakeChecks.restore()
+    boot.restored(action, scheduled, recovered, skipped)
+  }
+  fun resumeRinging() = synchronized(LOCK) {
+    val sessions = store.sessions()
+    if(sessions.isNotEmpty()) {
+      sessions.forEach { it.put("muted", false) }
+      store.sessions(sessions); ring()
+    }
   }
   fun ring() { context.startForegroundService(Intent(context, RingingService::class.java)) }
   companion object { val LOCK = Any(); private val games = linkedMapOf<String, BreakoutGame>(); private val nativeGames = linkedMapOf<String, NativeChallenge>() }

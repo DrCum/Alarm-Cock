@@ -4,7 +4,7 @@ The 0.11.0 test build implements all eight accepted wake-up ideas: alarm health,
 
 ## 1. Verify and harden Android delivery
 
-Run the physical-device matrix in `device-testing.md`. Add direct-boot storage/scheduling, user-visible delivery diagnostics, accessibility review, sound-library cleanup, and migrations for alarm definitions and active sessions. Preserve scheduled alarms and their task configurations during updates. Define an explicit recovery policy for a lost barcode or unavailable camera before public release.
+Run the physical-device matrix in `device-testing.md`. Version 0.15.0 adds minimal direct-boot storage/scheduling and local delivery diagnostics. Verify pre-unlock audio, unlock handoff, missed-alarm recovery, and background restrictions on supported Android versions. Continue accessibility review, sound-library cleanup, and migrations for alarm definitions and active sessions. Preserve scheduled alarms and their task configurations during updates. Define an explicit recovery policy for a lost barcode or unavailable camera before public release.
 
 Review current target-SDK, exact-alarm, full-screen intent, foreground-service, and Play Console requirements before distribution. Configure production signing and test the signed release binary.
 
